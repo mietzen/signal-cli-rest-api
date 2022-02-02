@@ -1,3 +1,5 @@
 signal-cli-config
 src/main
 src/signal-cli-rest-api
+docker-compose/postgress/.env
+docker-compose/postgress/data
