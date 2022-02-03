@@ -123,8 +123,8 @@ type About struct {
 }
 
 type SearchResultEntry struct {
-	Number      string         `json:"number"`
-	Registered  bool           `json:"registered"`
+	Number     string `json:"number"`
+	Registered bool   `json:"registered"`
 }
 
 func cleanupTmpFiles(paths []string) {
@@ -399,6 +399,36 @@ func (s *SignalClient) send(number string, message string,
 		f.Close()
 	}
 
+	saveToDataBase := utils.GetEnv("POSTGRES_SERVER", "")
+	if saveToDataBase != "" {
+		type Request struct {
+			Recipients  []string `json:"recipient,omitempty"`
+			Message     string   `json:"message"`
+			GroupId     string   `json:"group-id,omitempty"`
+			Attachments []string `json:"attachment,omitempty"`
+		}
+
+		request := Request{Message: message}
+		if isGroup {
+			request.GroupId = groupId
+		} else {
+			request.Recipients = recipients
+		}
+		if len(attachmentTmpPaths) > 0 {
+			request.Attachments = append(request.Attachments, attachmentTmpPaths...)
+		}
+
+		jsonStr, err := json.Marshal(request)
+		if err != nil {
+			return nil, err
+		}
+
+		dbError := utils.PushSendMessageToDatabase(jsonStr)
+		if dbError != nil {
+			return nil, err
+		}
+	}
+
 	if s.signalCliMode == JsonRpc {
 		jsonRpc2Client, err := s.getJsonRpc2Client(number)
 		if err != nil {
@@ -470,7 +500,7 @@ func (s *SignalClient) send(number string, message string,
 
 func (s *SignalClient) About() About {
 	about := About{SupportedApiVersions: []string{"v1", "v2"}, BuildNr: 2, Mode: getSignalCliModeString(s.signalCliMode),
-					Version: utils.GetEnv("BUILD_VERSION", "unset")}
+		Version: utils.GetEnv("BUILD_VERSION", "unset")}
 	return about
 }
 
@@ -533,7 +563,7 @@ func (s *SignalClient) getJsonRpc2Client(number string) (*JsonRpc2Client, error)
 	return nil, errors.New("Number not registered with JSON-RPC")
 }
 
-func (s *SignalClient) getJsonRpc2Clients() ([]*JsonRpc2Client) {
+func (s *SignalClient) getJsonRpc2Clients() []*JsonRpc2Client {
 	jsonRpc2Clients := []*JsonRpc2Client{}
 	for _, client := range s.jsonRpc2Clients {
 		jsonRpc2Clients = append(jsonRpc2Clients, client)
@@ -602,10 +632,16 @@ func (s *SignalClient) Receive(number string, timeout int64) (string, error) {
 
 		out = strings.Trim(out, "\n")
 		lines := strings.Split(out, "\n")
-
+		saveToDataBase := utils.GetEnv("POSTGRES_SERVER", "")
 		jsonStr := "["
 		for i, line := range lines {
 			jsonStr += line
+			if saveToDataBase != "" {
+				dbError := utils.PushReceivedMessageToDatabase(line)
+				if dbError != nil {
+					return "", err
+				}
+			}
 			if i != (len(lines) - 1) {
 				jsonStr += ","
 			}
