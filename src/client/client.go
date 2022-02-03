@@ -399,7 +399,7 @@ func (s *SignalClient) send(number string, message string,
 		f.Close()
 	}
 
-	saveToDataBase := utils.GetEnv("POSTGRES_SERVER", "")
+	saveToDataBase := utils.GetEnv("POSTGRES_HOST", "")
 	if saveToDataBase != "" {
 		type Request struct {
 			Recipients  []string `json:"recipient,omitempty"`
@@ -632,7 +632,7 @@ func (s *SignalClient) Receive(number string, timeout int64) (string, error) {
 
 		out = strings.Trim(out, "\n")
 		lines := strings.Split(out, "\n")
-		saveToDataBase := utils.GetEnv("POSTGRES_SERVER", "")
+		saveToDataBase := utils.GetEnv("POSTGRES_HOST", "")
 		jsonStr := "["
 		for i, line := range lines {
 			jsonStr += line
