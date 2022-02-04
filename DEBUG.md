@@ -11,17 +11,18 @@ docker build -t signal-cli-rest-api:debug --build-arg IMAGE=signal-cli-rest-api:
 ```
 
 Be sure to add:
-```json
+```yaml
     ports:
       - 2345:2345
 ```
-to your composefile to open the debugger port. Now start as usual with `compose up`
+to your composefile to open the debugger port. 
+
 
 ## Debug with vscode
 
 To attach to the debugger using vscode use the following `launch.json`
 
-```json
+```yaml
 {
     // Use IntelliSense to learn about possible attributes.
     // Hover to view descriptions of existing attributes.
@@ -38,9 +39,15 @@ To attach to the debugger using vscode use the following `launch.json`
             "port": 2345,
             "host": "127.0.0.1",
             "showLog": true,
-			"trace": "log",
-			"logOutput": "rpc"
+            "logOutput": "rpc"
         }
     ]
 }
 ```
+
+## Dev-Cycle
+- Make changes
+- Build the debug image
+- Start your stack with `compose up`
+- Attach the Debugger and test your changes
+- Repeat
