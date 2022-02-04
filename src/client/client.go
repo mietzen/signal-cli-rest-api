@@ -399,57 +399,37 @@ func (s *SignalClient) send(number string, message string,
 		f.Close()
 	}
 
-	saveToDataBase := utils.GetEnv("POSTGRES_HOST", "")
-	if saveToDataBase != "" {
-		type Request struct {
-			Recipients  []string `json:"recipient,omitempty"`
-			Message     string   `json:"message"`
-			GroupId     string   `json:"group-id,omitempty"`
-			Attachments []string `json:"attachment,omitempty"`
-		}
+	type Request struct {
+		Recipients  []string `json:"recipient,omitempty"`
+		Message     string   `json:"message"`
+		GroupId     string   `json:"group-id,omitempty"`
+		Attachments []string `json:"attachment,omitempty"`
+	}
 
-		request := Request{Message: message}
-		if isGroup {
-			request.GroupId = groupId
-		} else {
-			request.Recipients = recipients
-		}
-		if len(attachmentTmpPaths) > 0 {
-			request.Attachments = append(request.Attachments, attachmentTmpPaths...)
-		}
+	request := Request{Message: message}
+	if isGroup {
+		request.GroupId = groupId
+	} else {
+		request.Recipients = recipients
+	}
+	if len(attachmentTmpPaths) > 0 {
+		request.Attachments = append(request.Attachments, attachmentTmpPaths...)
+	}
 
-		jsonStr, err := json.Marshal(request)
-		if err != nil {
-			return nil, err
-		}
+	jsonStr, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
 
-		dbError := utils.PushSendMessageToDatabase(jsonStr)
-		if dbError != nil {
-			return nil, err
-		}
+	err = utils.PushReceivedMsgsToDB(string(jsonStr))
+	if err != nil {
+		return nil, err
 	}
 
 	if s.signalCliMode == JsonRpc {
 		jsonRpc2Client, err := s.getJsonRpc2Client(number)
 		if err != nil {
 			return nil, err
-		}
-
-		type Request struct {
-			Recipients  []string `json:"recipient,omitempty"`
-			Message     string   `json:"message"`
-			GroupId     string   `json:"group-id,omitempty"`
-			Attachments []string `json:"attachment,omitempty"`
-		}
-
-		request := Request{Message: message}
-		if isGroup {
-			request.GroupId = groupId
-		} else {
-			request.Recipients = recipients
-		}
-		if len(attachmentTmpPaths) > 0 {
-			request.Attachments = append(request.Attachments, attachmentTmpPaths...)
 		}
 
 		rawData, err := jsonRpc2Client.getRaw("send", request)
@@ -637,7 +617,7 @@ func (s *SignalClient) Receive(number string, timeout int64) (string, error) {
 		for i, line := range lines {
 			jsonStr += line
 			if saveToDataBase != "" {
-				dbError := utils.PushReceivedMessageToDatabase(line)
+				dbError := utils.PushReceivedMsgsToDB(line)
 				if dbError != nil {
 					return "", err
 				}
