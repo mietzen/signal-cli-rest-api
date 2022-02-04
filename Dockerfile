@@ -7,6 +7,7 @@ ARG GRAALVM_JAVA_VERSION=17
 ARG GRAALVM_VERSION=21.3.0
 
 ARG BUILD_VERSION_ARG=unset
+ARG DEBUG_BUILD=unset
 
 FROM golang:1.17-bullseye AS buildcontainer
 
@@ -16,6 +17,7 @@ ARG SWAG_VERSION
 ARG GRAALVM_JAVA_VERSION
 ARG GRAALVM_VERSION
 ARG BUILD_VERSION_ARG
+ARG DEBUG_BUILD
 ARG SIGNAL_CLI_NATIVE_PACKAGE_VERSION
 
 COPY ext/libraries/libsignal-client/v${LIBSIGNAL_CLIENT_VERSION} /tmp/libsignal-client-libraries
@@ -115,11 +117,20 @@ COPY src/go.mod /tmp/signal-cli-rest-api-src/
 COPY src/go.sum /tmp/signal-cli-rest-api-src/
 
 # build signal-cli-rest-api
-RUN cd /tmp/signal-cli-rest-api-src && swag init && go build
+RUN \
+if [ "$DEBUG_BUILD" = "true" ] ; then \
+	cd /tmp/signal-cli-rest-api-src && swag init && go build -gcflags='all=-N -l'; \
+else \
+	cd /tmp/signal-cli-rest-api-src && swag init && go build; \
+fi
 
 # build supervisorctl_config_creator
-RUN cd /tmp/signal-cli-rest-api-src/scripts && go build -o jsonrpc2-helper 
-
+RUN \
+if [ "$DEBUG_BUILD" = "true" ] ; then \
+	cd /tmp/signal-cli-rest-api-src/scripts && go build -gcflags='all=-N -l' -o jsonrpc2-helper; \
+else \
+	cd /tmp/signal-cli-rest-api-src/scripts && go build -o jsonrpc2-helper; \
+fi
 
 # Start a fresh container for release container
 FROM eclipse-temurin:17-focal

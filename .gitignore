@@ -1,5 +1,5 @@
 src/main
 src/signal-cli-rest-api
-**/postgress/data/db
+**/postgres/db
 **/signal-cli-config
-
+.vscode
