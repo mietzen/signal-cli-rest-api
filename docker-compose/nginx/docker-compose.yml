@@ -1,18 +1,21 @@
 version: "3"
 services:
   signal-cli-rest-api:
-    image: bbernhard/signal-cli-rest-api:latest
+    image: signal-cli-rest-api:debug #TODO: use latest
     container_name: signal-cli-rest-api
     environment:
-      - MODE=normal #supported modes: json-rpc, native, normal
-      #- AUTO_RECEIVE_SCHEDULE=0 22 * * * #enable this parameter on demand (see description below)
-      - POSTGRES_USER=signal-cli-rest-api
-      - POSTGRES_PASSWORD=h2EgStdwT74fyNLqA7FtisakVmqr3qRE
-      - POSTGRES_DB=signal-cli-rest-api
+      - MODE=normal # only normal mode is supported with AUTO_RECEIVE !
+      - AUTO_RECEIVE_SCHEDULE=0 22 * * *
+      - DB_TYPE=sqlite
     expose:
       - 8080
+    ports:
+      - 2345:2345 #TODO: Remove Debugger Port
     volumes:
       - "./data/signal-cli-rest-api/signal-cli-config:/home/.local/share/signal-cli"
+      - "./data/signal-cli-rest-api/message-archive:/home/message-archive"
+    depends_on:
+      - db
   nginx:
     image: "nginx:mainline-alpine"
     container_name: nginx

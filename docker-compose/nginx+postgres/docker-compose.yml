@@ -1,7 +1,7 @@
 version: "3"
 services:
   signal-cli-rest-api:
-    image: signal-cli-rest-api:debug
+    image: signal-cli-rest-api:debug #TODO: use latest
     container_name: signal-cli-rest-api
     environment:
       - MODE=normal # only normal mode is supported with AUTO_RECEIVE !
@@ -15,7 +15,7 @@ services:
     expose:
       - 8080
     ports:
-      - 2345:2345
+      - 2345:2345 #TODO: Remove Debugger Port
     volumes:
       - "./data/signal-cli-rest-api/signal-cli-config:/home/.local/share/signal-cli"
       - "./data/signal-cli-rest-api/message-archive:/home/message-archive"
@@ -43,11 +43,3 @@ services:
       - ./data/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - signal-cli-rest-api
-  pgadmin:
-    container_name: pgadmin4_container
-    image: dpage/pgadmin4
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: root
-    ports:
-      - "5050:80"

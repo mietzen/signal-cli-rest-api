@@ -1,7 +1,7 @@
 version: "3"
 services:
   signal-cli-rest-api:
-    image: signal-cli-rest-api:debug
+    image: signal-cli-rest-api:debug #TODO: use latest
     container_name: signal-cli-rest-api
     environment:
       - MODE=normal # only normal mode is supported with AUTO_RECEIVE !
@@ -14,7 +14,7 @@ services:
       - DB_NAME=signal-cli-rest-api
     ports:
       - "8080:8080" #map docker port 8080 to host port 8080.
-      - "2345:2345"
+      - "2345:2345" #TODO: Remove Debugger Port
     volumes:
       - "./data/signal-cli-rest-api/signal-cli-config:/home/.local/share/signal-cli"
       - "./data/signal-cli-rest-api/message-archive:/home/message-archive"
