@@ -3,6 +3,7 @@ package utils
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
@@ -50,14 +51,18 @@ func getLastMsgs(numberOfMessages int, table string) (string, error) {
 		return "", err
 	}
 	defer rows.Close()
-	var n int
+	var n string
+	rows.Next()
 	err = rows.Scan(&n)
 	if err != nil {
 		return "", err
 	}
-
-	if numberOfMessages > n {
-		numberOfMessages = n
+	i, err := strconv.Atoi(n)
+	if err != nil {
+		return "", err
+	}
+	if numberOfMessages > i {
+		numberOfMessages = i
 	}
 	if numberOfMessages != 0 {
 		queryStmt = fmt.Sprintf("SELECT data FROM %s ORDER BY id DESC LIMIT %d;", table, numberOfMessages)
