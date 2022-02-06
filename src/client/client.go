@@ -633,8 +633,8 @@ func (s *SignalClient) Receive(number string, timeout int64) (string, error) {
 		jsonStr := "["
 		for i, line := range lines {
 			jsonStr += line
-			dbError := utils.PushReceivedMsgsToDB(line)
-			if dbError != nil {
+			err := utils.PushReceivedMsgsToDB(line)
+			if err != nil {
 				return "", err
 			}
 			if i != (len(lines) - 1) {
