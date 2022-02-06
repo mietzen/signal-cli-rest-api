@@ -2,6 +2,8 @@ ARG IMAGE
 
 FROM ${IMAGE}
 
+ENV BUILD_VERSION=0.0.1
+
 RUN apt update && apt install golang git -y
 RUN cd /home && mkdir -p /home/go/bin \
 	&& export GOBIN=/home/go/bin \

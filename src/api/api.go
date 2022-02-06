@@ -3,10 +3,10 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
-	"errors"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/gin-gonic/gin"
@@ -342,7 +342,7 @@ func (a *Api) handleSignalReceive(ws *websocket.Conn, number string, stop chan s
 
 	for {
 		select {
-        case <-stop:
+		case <-stop:
 			ws.Close()
 			return
 		case msg := <-receiveChannel:
@@ -450,6 +450,56 @@ func (a *Api) Receive(c *gin.Context) {
 
 		c.String(200, jsonStr)
 	}
+}
+
+// @Summary Get Last Received Signal Messages from Archive.
+// @Tags Messages
+// @Description Get Last Received Signal Messages from Archive
+// @Accept  json
+// @Produce  json
+// @Success 200 {object} []string
+// @Failure 400 {object} Error
+// @Param number path string true "Registered Phone Number"
+// @Param quantity query string false "Number of messages to receive from archive (deceneding, default: 5)""
+// @Router /v1/archive/{number} [get]
+func (a *Api) GetReceivedMsgsFromArchive(c *gin.Context) {
+	n, err := strconv.Atoi(c.DefaultQuery("quantity", "5"))
+	if err != nil {
+		c.JSON(400, Error{Msg: err.Error()})
+		return
+	}
+	jsonStr, err := utils.GetLastReceivedMsgs(n)
+	if err != nil {
+		c.JSON(400, Error{Msg: err.Error()})
+		return
+	}
+
+	c.String(200, jsonStr)
+}
+
+// @Summary Get Last Send Signal Messages from Archive.
+// @Tags Messages
+// @Description Get Last Send Signal Messages from Archive
+// @Accept  json
+// @Produce  json
+// @Success 200 {object} []string
+// @Failure 400 {object} Error
+// @Param number path string true "Registered Phone Number"
+// @Param quantity query string false "Number of messages to receive from archive (deceneding, default: 5)""
+// @Router /v1/archive/{number} [get]
+func (a *Api) GetSendMsgsFromArchive(c *gin.Context) {
+	n, err := strconv.Atoi(c.DefaultQuery("quantity", "5"))
+	if err != nil {
+		c.JSON(400, Error{Msg: err.Error()})
+		return
+	}
+	jsonStr, err := utils.GetLastSendMsgs(n)
+	if err != nil {
+		c.JSON(400, Error{Msg: err.Error()})
+		return
+	}
+
+	c.String(200, jsonStr)
 }
 
 // @Summary Create a new Signal Group.

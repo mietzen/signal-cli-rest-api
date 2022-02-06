@@ -399,37 +399,27 @@ func (s *SignalClient) send(number string, message string,
 		f.Close()
 	}
 
-	type Request struct {
-		Recipients  []string `json:"recipient,omitempty"`
-		Message     string   `json:"message"`
-		GroupId     string   `json:"group-id,omitempty"`
-		Attachments []string `json:"attachment,omitempty"`
-	}
-
-	request := Request{Message: message}
-	if isGroup {
-		request.GroupId = groupId
-	} else {
-		request.Recipients = recipients
-	}
-	if len(attachmentTmpPaths) > 0 {
-		request.Attachments = append(request.Attachments, attachmentTmpPaths...)
-	}
-
-	jsonStr, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-
-	err = utils.PushReceivedMsgsToDB(string(jsonStr))
-	if err != nil {
-		return nil, err
-	}
-
 	if s.signalCliMode == JsonRpc {
 		jsonRpc2Client, err := s.getJsonRpc2Client(number)
 		if err != nil {
 			return nil, err
+		}
+
+		type Request struct {
+			Recipients  []string `json:"recipient,omitempty"`
+			Message     string   `json:"message"`
+			GroupId     string   `json:"group-id,omitempty"`
+			Attachments []string `json:"attachment,omitempty"`
+		}
+
+		request := Request{Message: message}
+		if isGroup {
+			request.GroupId = groupId
+		} else {
+			request.Recipients = recipients
+		}
+		if len(attachmentTmpPaths) > 0 {
+			request.Attachments = append(request.Attachments, attachmentTmpPaths...)
 		}
 
 		rawData, err := jsonRpc2Client.getRaw("send", request)
@@ -471,6 +461,35 @@ func (s *SignalClient) send(number string, message string,
 			cleanupTmpFiles(attachmentTmpPaths)
 			return nil, err
 		}
+	}
+	// resp timestamp
+
+	type SendMessage struct {
+		Recipients  []string `json:"recipient,omitempty"`
+		Message     string   `json:"message"`
+		Timestamp   int64    `json:"timestamp"`
+		GroupId     string   `json:"group-id,omitempty"`
+		Attachments []string `json:"attachment,omitempty"`
+	}
+
+	sendMessage := SendMessage{Message: message, Timestamp: resp.Timestamp}
+	if isGroup {
+		sendMessage.GroupId = groupId
+	} else {
+		sendMessage.Recipients = recipients
+	}
+	if len(attachmentTmpPaths) > 0 {
+		sendMessage.Attachments = append(sendMessage.Attachments, attachmentTmpPaths...)
+	}
+
+	jsonStr, err := json.Marshal(sendMessage)
+	if err != nil {
+		return nil, err
+	}
+
+	err = utils.PushReceivedMsgsToDB(string(jsonStr))
+	if err != nil {
+		return nil, err
 	}
 
 	cleanupTmpFiles(attachmentTmpPaths)

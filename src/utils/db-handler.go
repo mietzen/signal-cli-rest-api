@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 var (
@@ -14,7 +14,7 @@ var (
 
 func getDatabaseConnection() *sql.DB {
 	if dbConnection == nil {
-		dbType := GetEnv("DB_TYPE", "sqlite3")
+		dbType := GetEnv("DB_TYPE", "sqlite")
 		var dbSource string
 		switch dbType {
 		case "postgres":
@@ -25,8 +25,8 @@ func getDatabaseConnection() *sql.DB {
 				GetEnv("DB_PASSWORD", ""),
 				GetEnv("DB_NAME", ""))
 		default:
-			// sqlite3
-			dbSource = "/home/message-archive.db"
+			// sqlite
+			dbSource = "/home/message-archive/message-archive.db"
 		}
 		var err error
 		dbConnection, err = sql.Open(dbType, dbSource)

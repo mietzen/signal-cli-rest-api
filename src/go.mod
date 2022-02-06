@@ -17,11 +17,9 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sirupsen/logrus v1.6.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
-	github.com/swaggo/files v0.0.0-20190704085106-630677cd5c14
+	github.com/swaggo/files v0.0.0-20210815190702-a29dd2bc99b2
 	github.com/swaggo/gin-swagger v1.2.0
 	github.com/swaggo/swag v1.6.7
-	golang.org/x/net v0.0.0-20200625001655-4c5254603344 // indirect
-	golang.org/x/text v0.3.3 // indirect
-	golang.org/x/tools v0.0.0-20200626171337-aa94e735be7f // indirect
 	gopkg.in/yaml.v2 v2.3.0
+	modernc.org/sqlite v1.14.6
 )
