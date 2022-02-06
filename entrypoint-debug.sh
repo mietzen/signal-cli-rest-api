@@ -33,5 +33,13 @@ service supervisor start
 supervisorctl start all
 fi
 
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+echo "!!!                          !!!"
+echo "!!!      START DEBUGGER      !!!"
+echo "!!!      START DEBUGGER      !!!"
+echo "!!!      START DEBUGGER      !!!"
+echo "!!!                          !!!"
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+
 # Start API as signal-api user
 exec setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=$caps /home/go/bin/dlv --listen=:2345 --headless=true --log=true --log-output=debugger,debuglineerr,gdbwire,lldbout,rpc --accept-multiclient --api-version=2 exec /usr/bin/signal-cli-rest-api -- -signal-cli-config=${SIGNAL_CLI_CONFIG_DIR}

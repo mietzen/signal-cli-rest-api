@@ -462,7 +462,6 @@ func (s *SignalClient) send(number string, message string,
 			return nil, err
 		}
 	}
-	// resp timestamp
 
 	type SendMessage struct {
 		Recipients  []string `json:"recipient,omitempty"`
@@ -487,7 +486,7 @@ func (s *SignalClient) send(number string, message string,
 		return nil, err
 	}
 
-	err = utils.PushReceivedMsgsToDB(string(jsonStr))
+	err = utils.PushSendMsgsToDB(string(jsonStr))
 	if err != nil {
 		return nil, err
 	}

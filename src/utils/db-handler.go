@@ -43,33 +43,53 @@ func getLastMsgs(numberOfMessages int, table string) (string, error) {
 	}
 	var jsonStr string
 	db := getDatabaseConnection()
-	rows, err := db.Query(`SELECT "data" FROM "$1" ORDER BY id DESC LIMIT $2;`, table, numberOfMessages)
+	// Check message count
+	queryStmt := fmt.Sprintf("SELECT COUNT(*) FROM %s;", table)
+	rows, err := db.Query(queryStmt)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
+	var n int
+	err = rows.Scan(&n)
+	if err != nil {
+		return "", err
+	}
 
-	jsonStr = "["
-	i := 0
-	for rows.Next() {
-		var msg string
-		err = rows.Scan(&msg)
+	if numberOfMessages > n {
+		numberOfMessages = n
+	}
+	if numberOfMessages != 0 {
+		queryStmt = fmt.Sprintf("SELECT data FROM %s ORDER BY id DESC LIMIT %d;", table, numberOfMessages)
+		rows, err = db.Query(queryStmt)
 		if err != nil {
 			return "", err
 		}
-		jsonStr += msg
-		if i != (numberOfMessages - 1) {
-			jsonStr += ","
+		defer rows.Close()
+
+		jsonStr = "["
+		i := 0
+		for rows.Next() {
+			var msg string
+			err = rows.Scan(&msg)
+			if err != nil {
+				return "", err
+			}
+			jsonStr += msg
+			if i != (numberOfMessages - 1) {
+				jsonStr += ","
+			}
+			i++
 		}
-		i++
+		jsonStr += "]"
 	}
-	jsonStr += "]"
 	return jsonStr, err
 }
 
 func pushMsgsToDB(message string, table string) error {
 	db := getDatabaseConnection()
-	_, err := db.Exec(`insert into "$1"("data") values($2)`, table, message)
+	insertStmt := fmt.Sprintf("INSERT INTO %s (data) VALUES ('%s');", table, message)
+	_, err := db.Exec(insertStmt)
 	return err
 }
 
