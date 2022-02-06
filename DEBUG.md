@@ -15,7 +15,10 @@ Be sure to add:
     ports:
       - 2345:2345
 ```
-to your composefile to open the debugger port. 
+to your `docker-compose.yml` to open the debugger port. 
+
+**Beware signal-cli-rest-api only starts if you attach the debugger!!!**
+
 
 
 ## Debug with vscode
