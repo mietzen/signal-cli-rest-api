@@ -630,15 +630,12 @@ func (s *SignalClient) Receive(number string, timeout int64) (string, error) {
 
 		out = strings.Trim(out, "\n")
 		lines := strings.Split(out, "\n")
-		saveToDataBase := utils.GetEnv("POSTGRES_HOST", "")
 		jsonStr := "["
 		for i, line := range lines {
 			jsonStr += line
-			if saveToDataBase != "" {
-				dbError := utils.PushReceivedMsgsToDB(line)
-				if dbError != nil {
-					return "", err
-				}
+			dbError := utils.PushReceivedMsgsToDB(line)
+			if dbError != nil {
+				return "", err
 			}
 			if i != (len(lines) - 1) {
 				jsonStr += ","
