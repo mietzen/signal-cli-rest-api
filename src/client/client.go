@@ -463,12 +463,42 @@ func (s *SignalClient) send(number string, message string,
 		}
 	}
 
+	type Attachment struct {
+		mimetype     string `json:"contentType"`
+		filename     string `json:"filename"`
+		attachmentId string `json:"id"`
+		fileSize     int    `json:"size"`
+	}
+
+	type DataMessage struct {
+		Timestamp   int64        `json:"timestamp"`
+		Message     string       `json:"message"`
+		Expire      int          `json:"expiresInSeconds"`
+		ViewOnce    bool         `json:"viewOnce"`
+		Attachments []Attachment `json:"attachments"`
+	}
+
+	type Envelope struct {
+		Acc       string      `json:"source"`
+		AccNumber string      `json:"sourceNumber"`
+		AccUUID   string      `json:"sourceUuid"`
+		AccName   string      `json:"sourceName"`
+		Device    int         `json:"sourceDevice"`
+		Timestamp int64       `json:"timestamp"`
+		Message   DataMessage `json:"dataMessage"`
+	}
+
+	type Message struct {
+		Envelope Envelope `json:"envelope"`
+		Account  string   `json:"account"`
+	}
+
 	type SendMessage struct {
-		Recipients  []string `json:"recipient,omitempty"`
-		Message     string   `json:"message"`
-		Timestamp   int64    `json:"timestamp"`
-		GroupId     string   `json:"group-id,omitempty"`
-		Attachments []string `json:"attachment,omitempty"`
+		Recipients  []string     `json:"recipient,omitempty"`
+		Message     string       `json:"message"`
+		Timestamp   int64        `json:"timestamp"`
+		GroupId     string       `json:"group-id,omitempty"`
+		Attachments []Attachment `json:"attachments,omitempty"`
 	}
 
 	sendMessage := SendMessage{Message: message, Timestamp: resp.Timestamp}
@@ -477,8 +507,18 @@ func (s *SignalClient) send(number string, message string,
 	} else {
 		sendMessage.Recipients = recipients
 	}
-	if len(attachmentTmpPaths) > 0 {
-		sendMessage.Attachments = append(sendMessage.Attachments, attachmentTmpPaths...)
+
+	if len(attachmentTmpPaths) > 0 && utils.GetEnv("PERSIT_SEND_ATTACHMENTS", "") == "true" {
+		attachmentPaths := []string{}
+		for _, tmpPath := range attachmentTmpPaths {
+			attachmentId := utils.GenerateAttachmentID()
+			persitentPath := filepath.Join(s.signalCliConfig+"/attachments/", attachmentId)
+			err := utils.CopyFile(tmpPath, persitentPath)
+			if err != nil {
+				return nil, err
+			}
+			attachmentPaths = append(attachmentPaths, persitentPath)
+		sendMessage.Attachments = append(sendMessage.Attachments, attachmentPaths...)
 	}
 
 	jsonStr, err := json.Marshal(sendMessage)

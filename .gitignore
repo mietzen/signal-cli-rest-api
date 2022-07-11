@@ -5,3 +5,5 @@ src/signal-cli-rest-api
 **/nginx/conf.d/
 **/message-archive/message-archive.db
 .vscode
+.DS_Store
+.ipynb_checkpoints
