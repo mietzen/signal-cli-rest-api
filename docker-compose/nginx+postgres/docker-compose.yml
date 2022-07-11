@@ -12,7 +12,6 @@ services:
       - DB_USER=signal-cli-rest-api
       - DB_PASSWORD=h2EgStdwT74fyNLqA7FtisakVmqr3qRE
       - DB_NAME=signal-cli-rest-api
-      - PERSIT_SEND_ATTACHMENTS=true
     expose:
       - 8080
     ports:

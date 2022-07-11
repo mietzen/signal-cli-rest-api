@@ -1,12 +1,8 @@
 package utils
 
 import (
-	"fmt"
-	"io"
-	"math/rand"
 	"os"
 	"strconv"
-	"time"
 )
 
 func GetEnv(key string, defaultVal string) string {
@@ -49,39 +45,4 @@ func IsPhoneNumber(s string) bool {
 		}
 	}
 	return true
-}
-
-func CopyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	if err != nil {
-		return err
-	}
-	return out.Close()
-}
-
-func GenerateAttachmentID() string {
-	rand.Seed(time.Now().UnixNano())
-	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_")
-	id := make([]rune, 20)
-	for i := range id {
-		id[i] = letters[rand.Intn(len(letters))]
-	}
-	return string(id)
-}
-
-func GenerateAttachmentName(timestamp int64, mimetype string) string {
-	t := time.Unix(timestamp, 0)
-	return fmt.Sprintf("signal-%s.%s", t.Format("2006-01-02-150405"), mimetype)
 }
