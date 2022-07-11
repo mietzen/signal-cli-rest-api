@@ -25,7 +25,9 @@ e.g:
   3. Find the line that looks like this: `Prevented navigation to “signalcaptcha://{captcha value}” due to an unknown protocol.` Copy the captcha value
   4. Use it to make the registration call like this:
 
-  `curl -X POST -H "Content-Type: application/json" -d '{"captcha":"captcha value"}' 'http://127.0.0.1:8080/v1/register/<number>`
+  `curl -X POST -H "Content-Type: application/json" -d '{"captcha":"captcha value"}' 'http://127.0.0.1:8080/v1/register/<number>'`
+  or via voice  
+  `curl -X POST -H "Content-Type: application/json" -d '{"captcha":"captcha value","use_voice": true}' 'http://127.0.0.1:8080/v1/register/<number>`
 
 - Verify the number using the code received via SMS/voice
 
@@ -46,6 +48,17 @@ e.g:
 - Send a message (+ base64 encoded attachment) to multiple recipients
 
   `curl -X POST -H "Content-Type: application/json" -d '{"message": "<message>", "base64_attachments": ["<base64 encoded attachment>"], "number": "<number>", "recipients": ["<recipient1>", "<recipient2>"]}' 'http://127.0.0.1:8080/v2/send'`
+
+- Send a message with a base64 encoded attachment
+
+  e.g:
+  `TMPFILE="$(base64 image_9.jpg)"`
+  `curl -X POST -H "Content-Type: application/json" -d '{"message": "Test image", "base64_attachments": ["'"${TMPFILE}"'"], "number": "+431212131491291", "recipients": ["+4354546464654"]}' 'http://127.0.0.1:8080/v2/send'`
+
+  For sending larger files such as a 4MB mp4 video file:
+
+  `TMPFILE="$(base64 video.mp4)"`
+  `echo '{"message": "Test video", "base64_attachments": ["'"$TMPFILE"'"], "number": "+431212131491291", "recipients": ["+4354546464654"]}' | curl -X POST -H "Content-Type: application/json" -d @- 'http://127.0.0.1:8080/v2/send'`
 
 - Send a message to a group
 

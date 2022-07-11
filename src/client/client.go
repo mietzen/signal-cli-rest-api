@@ -1,25 +1,19 @@
 package client
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
+	"fmt"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/h2non/filetype"
-
-	//"github.com/sourcegraph/jsonrpc2"//"net/rpc/jsonrpc"
-	log "github.com/sirupsen/logrus"
 
 	uuid "github.com/gofrs/uuid"
 	qrcode "github.com/skip2/go-qrcode"
@@ -75,6 +69,7 @@ type GroupEntry struct {
 	PendingInvites  []string `json:"pending_invites"`
 	PendingRequests []string `json:"pending_requests"`
 	InviteLink      string   `json:"invite_link"`
+	Admins          []string `json:"admins"`
 }
 
 type IdentityEntry struct {
@@ -90,6 +85,11 @@ type SignalCliGroupMember struct {
 	Uuid   string `json:"uuid"`
 }
 
+type SignalCliGroupAdmin struct {
+	Number string `json:"number"`
+	Uuid   string `json:"uuid"`
+}
+
 type SignalCliGroupEntry struct {
 	Name              string                 `json:"name"`
 	Id                string                 `json:"id"`
@@ -99,6 +99,7 @@ type SignalCliGroupEntry struct {
 	PendingMembers    []SignalCliGroupMember `json:"pendingMembers"`
 	RequestingMembers []SignalCliGroupMember `json:"requestingMembers"`
 	GroupInviteLink   string                 `json:"groupInviteLink"`
+	Admins            []SignalCliGroupAdmin  `json:"admins"`
 }
 
 type SignalCliIdentityEntry struct {
@@ -193,84 +194,6 @@ func getContainerId() (string, error) {
 	return containerId, nil
 }
 
-func runSignalCli(wait bool, args []string, stdin string, signalCliMode SignalCliMode) (string, error) {
-	containerId, err := getContainerId()
-
-	log.Debug("If you want to run this command manually, run the following steps on your host system:")
-	if err == nil {
-		log.Debug("*) docker exec -it ", containerId, " /bin/bash")
-	} else {
-		log.Debug("*) docker exec -it <container id> /bin/bash")
-	}
-
-	signalCliBinary := ""
-	if signalCliMode == Normal {
-		signalCliBinary = "signal-cli"
-	} else if signalCliMode == Native {
-		signalCliBinary = "signal-cli-native"
-	} else {
-		return "", errors.New("Invalid signal-cli mode")
-	}
-
-	fullCmd := ""
-	if stdin != "" {
-		fullCmd += "echo '" + stdin + "' | "
-	}
-	fullCmd += signalCliBinary + " " + strings.Join(args, " ")
-
-	log.Debug("*) su signal-api")
-	log.Debug("*) ", fullCmd)
-
-	cmdTimeout, err := utils.GetIntEnv("SIGNAL_CLI_CMD_TIMEOUT", 120)
-	if err != nil {
-		log.Error("Env variable 'SIGNAL_CLI_CMD_TIMEOUT' contains an invalid timeout...falling back to default timeout (120 seconds)")
-		cmdTimeout = 120
-	}
-
-	cmd := exec.Command(signalCliBinary, args...)
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
-	if wait {
-		var errBuffer bytes.Buffer
-		var outBuffer bytes.Buffer
-		cmd.Stderr = &errBuffer
-		cmd.Stdout = &outBuffer
-
-		err := cmd.Start()
-		if err != nil {
-			return "", err
-		}
-
-		done := make(chan error, 1)
-		go func() {
-			done <- cmd.Wait()
-		}()
-		select {
-		case <-time.After(time.Duration(cmdTimeout) * time.Second):
-			err := cmd.Process.Kill()
-			if err != nil {
-				return "", err
-			}
-			return "", errors.New("process killed as timeout reached")
-		case err := <-done:
-			if err != nil {
-				return "", errors.New(errBuffer.String())
-			}
-		}
-
-		return outBuffer.String(), nil
-	} else {
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return "", err
-		}
-		cmd.Start()
-		buf := bufio.NewReader(stdout) // Notice that this is not in a loop
-		line, _, _ := buf.ReadLine()
-		return string(line), nil
-	}
-}
 
 func ConvertGroupIdToInternalGroupId(id string) (string, error) {
 
@@ -302,10 +225,13 @@ type SignalClient struct {
 	jsonRpc2ClientConfig     *utils.JsonRpc2ClientConfig
 	jsonRpc2ClientConfigPath string
 	jsonRpc2Clients          map[string]*JsonRpc2Client
+	signalCliApiConfigPath   string
+	signalCliApiConfig       *utils.SignalCliApiConfig
+	cliClient                *CliClient
 }
 
 func NewSignalClient(signalCliConfig string, attachmentTmpDir string, avatarTmpDir string, signalCliMode SignalCliMode,
-	jsonRpc2ClientConfigPath string) *SignalClient {
+	jsonRpc2ClientConfigPath string, signalCliApiConfigPath string) *SignalClient {
 	return &SignalClient{
 		signalCliConfig:          signalCliConfig,
 		attachmentTmpDir:         attachmentTmpDir,
@@ -313,6 +239,7 @@ func NewSignalClient(signalCliConfig string, attachmentTmpDir string, avatarTmpD
 		signalCliMode:            signalCliMode,
 		jsonRpc2ClientConfigPath: jsonRpc2ClientConfigPath,
 		jsonRpc2Clients:          make(map[string]*JsonRpc2Client),
+		signalCliApiConfigPath:   signalCliApiConfigPath,
 	}
 }
 
@@ -321,6 +248,12 @@ func (s *SignalClient) GetSignalCliMode() SignalCliMode {
 }
 
 func (s *SignalClient) Init() error {
+	s.signalCliApiConfig = utils.NewSignalCliApiConfig()
+	err := s.signalCliApiConfig.Load(s.signalCliApiConfigPath)
+	if err != nil {
+		return err
+	}
+
 	if s.signalCliMode == JsonRpc {
 		s.jsonRpc2ClientConfig = utils.NewJsonRpc2ClientConfig()
 		err := s.jsonRpc2ClientConfig.Load(s.jsonRpc2ClientConfigPath)
@@ -330,7 +263,7 @@ func (s *SignalClient) Init() error {
 
 		tcpPortsNumberMapping := s.jsonRpc2ClientConfig.GetTcpPortsForNumbers()
 		for number, tcpPort := range tcpPortsNumberMapping {
-			s.jsonRpc2Clients[number] = NewJsonRpc2Client()
+			s.jsonRpc2Clients[number] = NewJsonRpc2Client(s.signalCliApiConfig, number)
 			err := s.jsonRpc2Clients[number].Dial("127.0.0.1:" + strconv.FormatInt(tcpPort, 10))
 			if err != nil {
 				return err
@@ -338,7 +271,10 @@ func (s *SignalClient) Init() error {
 
 			go s.jsonRpc2Clients[number].ReceiveData(number) //receive messages in goroutine
 		}
+	} else {
+		s.cliClient = NewCliClient(s.signalCliMode, s.signalCliApiConfig)
 	}
+
 	return nil
 }
 
@@ -448,7 +384,7 @@ func (s *SignalClient) send(number string, message string,
 			cmd = append(cmd, attachmentTmpPaths...)
 		}
 
-		rawData, err := runSignalCli(true, cmd, message, s.signalCliMode)
+		rawData, err := s.cliClient.Execute(true, cmd, message)
 		if err != nil {
 			cleanupTmpFiles(attachmentTmpPaths)
 			if strings.Contains(err.Error(), signalCliV2GroupError) {
@@ -556,11 +492,11 @@ func (s *SignalClient) RegisterNumber(number string, useVoice bool, captcha stri
 		command = append(command, []string{"--captcha", captcha}...)
 	}
 
-	_, err := runSignalCli(true, command, "", s.signalCliMode)
+	_, err := s.cliClient.Execute(true, command, "")
 	return err
 }
 
-func (s *SignalClient) UnregisterNumber(number string, deleteAccount bool) error {
+func (s *SignalClient) UnregisterNumber(number string, deleteAccount bool, deleteLocalData bool) error {
 	if s.signalCliMode == JsonRpc {
 		return errors.New("This functionality is only available in normal/native mode!")
 	}
@@ -570,7 +506,18 @@ func (s *SignalClient) UnregisterNumber(number string, deleteAccount bool) error
 		command = append(command, "--delete-account")
 	}
 
-	_, err := runSignalCli(true, command, "", s.signalCliMode)
+	_, err := s.cliClient.Execute(true, command, "")
+
+	if deleteLocalData {
+		command := []string{"--config", s.signalCliConfig, "-a", number, "deleteLocalAccountData"}
+		_, err2 := s.cliClient.Execute(true, command, "")
+		if (err2 != nil) && (err != nil) {
+			err = fmt.Errorf("%w (%w)", err, err2)
+		} else if (err2 != nil) && (err == nil) {
+			err = err2
+		}
+	}
+
 	return err
 }
 
@@ -585,7 +532,7 @@ func (s *SignalClient) VerifyRegisteredNumber(number string, token string, pin s
 		cmd = append(cmd, pin)
 	}
 
-	_, err := runSignalCli(true, cmd, "", s.signalCliMode)
+	_, err := s.cliClient.Execute(true, cmd, "")
 	return err
 }
 
@@ -663,7 +610,7 @@ func (s *SignalClient) Receive(number string, timeout int64) (string, error) {
 	} else {
 		command := []string{"--config", s.signalCliConfig, "--output", "json", "-a", number, "receive", "-t", strconv.FormatInt(timeout, 10)}
 
-		out, err := runSignalCli(true, command, "", s.signalCliMode)
+		out, err := s.cliClient.Execute(true, command, "")
 		if err != nil {
 			return "", err
 		}
@@ -743,7 +690,7 @@ func (s *SignalClient) CreateGroup(number string, name string, members []string,
 			cmd = append(cmd, []string{"--description", description}...)
 		}
 
-		rawData, err := runSignalCli(true, cmd, "", s.signalCliMode)
+		rawData, err := s.cliClient.Execute(true, cmd, "")
 		if err != nil {
 			if strings.Contains(err.Error(), signalCliV2GroupError) {
 				return "", errors.New("Cannot create group - please first update your profile.")
@@ -755,6 +702,132 @@ func (s *SignalClient) CreateGroup(number string, name string, members []string,
 	groupId := convertInternalGroupIdToGroupId(internalGroupId)
 
 	return groupId, nil
+}
+
+func (s *SignalClient) updateGroupMembers(number string, groupId string, members []string, add bool) error {
+	var err error
+
+	if len(members) == 0 {
+		return nil
+	}
+
+	group, err := s.GetGroup(number, groupId)
+	if err != nil {
+		return err
+	}
+
+	if group == nil {
+		return &NotFoundError{Description: "No group with that group id (" + groupId + ") found"}
+	}
+
+	internalGroupId, err := ConvertGroupIdToInternalGroupId(groupId)
+	if err != nil {
+		return errors.New("Invalid group id")
+	}
+
+	if s.signalCliMode == JsonRpc {
+		type Request struct {
+			Name          string   `json:"name,omitempty"`
+			Members       []string `json:"member,omitempty"`
+			RemoveMembers []string `json:"remove-member,omitempty"`
+			GroupId       string   `json:"groupId"`
+		}
+		request := Request{GroupId: internalGroupId}
+		if add {
+			request.Members = append(request.Members, members...)
+		} else {
+			request.RemoveMembers = append(request.RemoveMembers, members...)
+		}
+
+		jsonRpc2Client, err := s.getJsonRpc2Client(number)
+		if err != nil {
+			return err
+		}
+		_, err = jsonRpc2Client.getRaw("updateGroup", request)
+	} else {
+		cmd := []string{"--config", s.signalCliConfig, "-a", number, "updateGroup", "-g", internalGroupId}
+
+		if add {
+			cmd = append(cmd, "-m")
+		} else {
+			cmd = append(cmd, "-r")
+		}
+		cmd = append(cmd, members...)
+
+		_, err = s.cliClient.Execute(true, cmd, "")
+	}
+	return err
+}
+
+func (s *SignalClient) AddMembersToGroup(number string, groupId string, members []string) error {
+	return s.updateGroupMembers(number, groupId, members, true)
+}
+
+func (s *SignalClient) RemoveMembersFromGroup(number string, groupId string, members []string) error {
+	return s.updateGroupMembers(number, groupId, members, false)
+}
+
+func (s *SignalClient) updateGroupAdmins(number string, groupId string, admins []string, add bool) error {
+	var err error
+
+	if len(admins) == 0 {
+		return nil
+	}
+
+	group, err := s.GetGroup(number, groupId)
+	if err != nil {
+		return err
+	}
+
+	if group == nil {
+		return &NotFoundError{Description: "No group with that group id (" + groupId + ") found"}
+	}
+
+	internalGroupId, err := ConvertGroupIdToInternalGroupId(groupId)
+	if err != nil {
+		return errors.New("Invalid group id")
+	}
+
+	if s.signalCliMode == JsonRpc {
+		type Request struct {
+			Name         string   `json:"name,omitempty"`
+			Admins       []string `json:"admin,omitempty"`
+			RemoveAdmins []string `json:"remove-admin,omitempty"`
+			GroupId      string   `json:"groupId"`
+		}
+		request := Request{GroupId: internalGroupId}
+		if add {
+			request.Admins = append(request.Admins, admins...)
+		} else {
+			request.RemoveAdmins = append(request.RemoveAdmins, admins...)
+		}
+
+		jsonRpc2Client, err := s.getJsonRpc2Client(number)
+		if err != nil {
+			return err
+		}
+		_, err = jsonRpc2Client.getRaw("updateGroup", request)
+	} else {
+		cmd := []string{"--config", s.signalCliConfig, "-a", number, "updateGroup", "-g", internalGroupId}
+
+		if add {
+			cmd = append(cmd, "--admin")
+		} else {
+			cmd = append(cmd, "--remove-admin")
+		}
+		cmd = append(cmd, admins...)
+
+		_, err = s.cliClient.Execute(true, cmd, "")
+	}
+	return err
+}
+
+func (s *SignalClient) AddAdminsToGroup(number string, groupId string, admins []string) error {
+	return s.updateGroupAdmins(number, groupId, admins, true)
+}
+
+func (s *SignalClient) RemoveAdminsFromGroup(number string, groupId string, admins []string) error {
+	return s.updateGroupAdmins(number, groupId, admins, false)
 }
 
 func (s *SignalClient) GetGroups(number string) ([]GroupEntry, error) {
@@ -774,7 +847,7 @@ func (s *SignalClient) GetGroups(number string) ([]GroupEntry, error) {
 			return groupEntries, err
 		}
 	} else {
-		rawData, err = runSignalCli(true, []string{"--config", s.signalCliConfig, "--output", "json", "-a", number, "listGroups", "-d"}, "", s.signalCliMode)
+		rawData, err = s.cliClient.Execute(true, []string{"--config", s.signalCliConfig, "--output", "json", "-a", number, "listGroups", "-d"}, "")
 		if err != nil {
 			return groupEntries, err
 		}
@@ -810,6 +883,12 @@ func (s *SignalClient) GetGroups(number string) ([]GroupEntry, error) {
 		}
 		groupEntry.PendingInvites = requestingMembers
 
+		admins := []string{}
+		for _, val := range signalCliGroupEntry.Admins {
+			admins = append(admins, val.Number)
+		}
+		groupEntry.Admins = admins
+
 		groupEntry.InviteLink = signalCliGroupEntry.GroupInviteLink
 
 		groupEntries = append(groupEntries, groupEntry)
@@ -836,7 +915,7 @@ func (s *SignalClient) GetGroup(number string, groupId string) (*GroupEntry, err
 }
 
 func (s *SignalClient) DeleteGroup(number string, groupId string) error {
-	_, err := runSignalCli(true, []string{"--config", s.signalCliConfig, "-a", number, "quitGroup", "-g", string(groupId)}, "", s.signalCliMode)
+	_, err := s.cliClient.Execute(true, []string{"--config", s.signalCliConfig, "-a", number, "quitGroup", "-g", string(groupId)}, "")
 	return err
 }
 
@@ -846,7 +925,7 @@ func (s *SignalClient) GetQrCodeLink(deviceName string) ([]byte, error) {
 	}
 	command := []string{"--config", s.signalCliConfig, "link", "-n", deviceName}
 
-	tsdeviceLink, err := runSignalCli(false, command, "", s.signalCliMode)
+	tsdeviceLink, err := s.cliClient.Execute(false, command, "")
 	if err != nil {
 		return []byte{}, errors.New("Couldn't create QR code: " + err.Error())
 	}
@@ -933,7 +1012,7 @@ func (s *SignalClient) UpdateProfile(number string, profileName string, base64Av
 			return err
 		}
 
-		avatarTmpPath := s.avatarTmpDir + u.String() + "." + fType.Extension
+		avatarTmpPath = s.avatarTmpDir + u.String() + "." + fType.Extension
 
 		f, err := os.Create(avatarTmpPath)
 		if err != nil {
@@ -954,7 +1033,7 @@ func (s *SignalClient) UpdateProfile(number string, profileName string, base64Av
 
 	if s.signalCliMode == JsonRpc {
 		type Request struct {
-			Name         string `json:"name"`
+			Name         string `json:"given-name"`
 			Avatar       string `json:"avatar,omitempty"`
 			RemoveAvatar bool   `json:"remove-avatar"`
 		}
@@ -971,14 +1050,14 @@ func (s *SignalClient) UpdateProfile(number string, profileName string, base64Av
 		}
 		_, err = jsonRpc2Client.getRaw("updateProfile", request)
 	} else {
-		cmd := []string{"--config", s.signalCliConfig, "-a", number, "updateProfile", "--name", profileName}
+		cmd := []string{"--config", s.signalCliConfig, "-a", number, "updateProfile", "--given-name", profileName}
 		if base64Avatar == "" {
 			cmd = append(cmd, "--remove-avatar")
 		} else {
 			cmd = append(cmd, []string{"--avatar", avatarTmpPath}...)
 		}
 
-		_, err = runSignalCli(true, cmd, "", s.signalCliMode)
+		_, err = s.cliClient.Execute(true, cmd, "")
 	}
 
 	cleanupTmpFiles([]string{avatarTmpPath})
@@ -1009,7 +1088,7 @@ func (s *SignalClient) ListIdentities(number string) (*[]IdentityEntry, error) {
 			identityEntries = append(identityEntries, identityEntry)
 		}
 	} else {
-		rawData, err := runSignalCli(true, []string{"--config", s.signalCliConfig, "-a", number, "listIdentities"}, "", s.signalCliMode)
+		rawData, err := s.cliClient.Execute(true, []string{"--config", s.signalCliConfig, "-a", number, "listIdentities"}, "")
 		if err != nil {
 			return nil, err
 		}
@@ -1032,22 +1111,41 @@ func (s *SignalClient) ListIdentities(number string) (*[]IdentityEntry, error) {
 	return &identityEntries, nil
 }
 
-func (s *SignalClient) TrustIdentity(number string, numberToTrust string, verifiedSafetyNumber string) error {
+func (s *SignalClient) TrustIdentity(number string, numberToTrust string, verifiedSafetyNumber *string, trustAllKnownKeys *bool) error {
 	var err error
 	if s.signalCliMode == JsonRpc {
 		type Request struct {
-			VerifiedSafetyNumber string `json:"verified-safety-number"`
+			VerifiedSafetyNumber string `json:"verified-safety-number,omitempty"`
+			TrustAllKnownKeys    bool   `json:"trust-all-known-keys,omitempty"`
 			Recipient            string `json:"recipient"`
 		}
-		request := Request{VerifiedSafetyNumber: verifiedSafetyNumber, Recipient: numberToTrust}
+		request := Request{Recipient: numberToTrust}
+
+		if verifiedSafetyNumber != nil {
+			request.VerifiedSafetyNumber = *verifiedSafetyNumber
+		}
+
+		if trustAllKnownKeys != nil {
+			request.TrustAllKnownKeys = *trustAllKnownKeys
+		}
+
 		jsonRpc2Client, err := s.getJsonRpc2Client(number)
 		if err != nil {
 			return err
 		}
 		_, err = jsonRpc2Client.getRaw("trust", request)
 	} else {
-		cmd := []string{"--config", s.signalCliConfig, "-a", number, "trust", numberToTrust, "--verified-safety-number", verifiedSafetyNumber}
-		_, err = runSignalCli(true, cmd, "", s.signalCliMode)
+		cmd := []string{"--config", s.signalCliConfig, "-a", number, "trust", numberToTrust}
+
+		if verifiedSafetyNumber != nil {
+			cmd = append(cmd, []string{"--verified-safety-number", *verifiedSafetyNumber}...)
+		}
+
+		if trustAllKnownKeys != nil && *trustAllKnownKeys {
+			cmd = append(cmd, "--trust-all-known-keys")
+		}
+
+		_, err = s.cliClient.Execute(true, cmd, "")
 	}
 	return err
 }
@@ -1065,7 +1163,7 @@ func (s *SignalClient) BlockGroup(number string, groupId string) error {
 		}
 		_, err = jsonRpc2Client.getRaw("block", request)
 	} else {
-		_, err = runSignalCli(true, []string{"--config", s.signalCliConfig, "-a", number, "block", "-g", groupId}, "", s.signalCliMode)
+		_, err = s.cliClient.Execute(true, []string{"--config", s.signalCliConfig, "-a", number, "block", "-g", groupId}, "")
 	}
 	return err
 }
@@ -1083,7 +1181,7 @@ func (s *SignalClient) JoinGroup(number string, groupId string) error {
 		}
 		_, err = jsonRpc2Client.getRaw("updateGroup", request)
 	} else {
-		_, err = runSignalCli(true, []string{"--config", s.signalCliConfig, "-a", number, "updateGroup", "-g", groupId}, "", s.signalCliMode)
+		_, err = s.cliClient.Execute(true, []string{"--config", s.signalCliConfig, "-a", number, "updateGroup", "-g", groupId}, "")
 	}
 	return err
 }
@@ -1101,7 +1199,7 @@ func (s *SignalClient) QuitGroup(number string, groupId string) error {
 		}
 		_, err = jsonRpc2Client.getRaw("quitGroup", request)
 	} else {
-		_, err = runSignalCli(true, []string{"--config", s.signalCliConfig, "-a", number, "quitGroup", "-g", groupId}, "", s.signalCliMode)
+		_, err = s.cliClient.Execute(true, []string{"--config", s.signalCliConfig, "-a", number, "quitGroup", "-g", groupId}, "")
 	}
 	return err
 }
@@ -1165,7 +1263,7 @@ func (s *SignalClient) SendReaction(number string, recipient string, emoji strin
 	if remove {
 		cmd = append(cmd, "-r")
 	}
-	_, err = runSignalCli(true, cmd, "", s.signalCliMode)
+	_, err = s.cliClient.Execute(true, cmd, "")
 	return err
 }
 
@@ -1205,7 +1303,7 @@ func (s *SignalClient) SendStartTyping(number string, recipient string) error {
 		} else {
 			cmd = append(cmd, []string{"-g", recp}...)
 		}
-		_, err = runSignalCli(true, cmd, "", s.signalCliMode)
+		_, err = s.cliClient.Execute(true, cmd, "")
 	}
 
 	return err
@@ -1248,7 +1346,7 @@ func (s *SignalClient) SendStopTyping(number string, recipient string) error {
 		} else {
 			cmd = append(cmd, []string{"-g", recp}...)
 		}
-		_, err = runSignalCli(true, cmd, "", s.signalCliMode)
+		_, err = s.cliClient.Execute(true, cmd, "")
 	}
 
 	return err
@@ -1282,7 +1380,7 @@ func (s *SignalClient) SearchForNumbers(numbers []string) ([]SearchResultEntry, 
 	} else {
 		cmd := []string{"--config", s.signalCliConfig, "--output", "json", "getUserStatus"}
 		cmd = append(cmd, numbers...)
-		rawData, err = runSignalCli(true, cmd, "", s.signalCliMode)
+		rawData, err = s.cliClient.Execute(true, cmd, "")
 	}
 
 	if err != nil {
@@ -1306,4 +1404,69 @@ func (s *SignalClient) SearchForNumbers(numbers []string) ([]SearchResultEntry, 
 	}
 
 	return searchResultEntries, err
+}
+
+func (s *SignalClient) UpdateContact(number string, recipient string, name *string, expirationInSeconds *int) error {
+	var err error
+	if s.signalCliMode == JsonRpc {
+		type Request struct {
+			Recipient  string `json:"recipient"`
+			Name       string `json:"name,omitempty"`
+			Expiration int    `json:"expiration,omitempty"`
+		}
+		request := Request{Recipient: recipient}
+		if name != nil {
+			request.Name = *name
+		}
+		if expirationInSeconds != nil {
+			request.Expiration = *expirationInSeconds
+		}
+		jsonRpc2Client, err := s.getJsonRpc2Client(number)
+		if err != nil {
+			return err
+		}
+		_, err = jsonRpc2Client.getRaw("updateContact", request)
+	} else {
+		cmd := []string{"--config", s.signalCliConfig, "-a", number, "updateContact", recipient}
+		if name != nil {
+			cmd = append(cmd, []string{"-n", *name}...)
+		}
+		if expirationInSeconds != nil {
+			cmd = append(cmd, []string{"-e", strconv.Itoa(*expirationInSeconds)}...)
+		}
+		_, err = s.cliClient.Execute(true, cmd, "")
+	}
+	return err
+}
+
+func (s *SignalClient) AddDevice(number string, uri string) error {
+	var err error
+	if s.signalCliMode == JsonRpc {
+		type Request struct {
+			Uri string `json:"uri"`
+		}
+		request := Request{Uri: uri}
+		jsonRpc2Client, err := s.getJsonRpc2Client(number)
+		if err != nil {
+			return err
+		}
+		_, err = jsonRpc2Client.getRaw("addDevice", request)
+	} else {
+		cmd := []string{"--config", s.signalCliConfig, "-a", number, "addDevice", "--uri", uri}
+		_, err = s.cliClient.Execute(true, cmd, "")
+	}
+	return err
+}
+
+func (s *SignalClient) SetTrustMode(number string, trustMode utils.SignalCliTrustMode) error {
+	s.signalCliApiConfig.SetTrustModeForNumber(number, trustMode)
+	return s.signalCliApiConfig.Persist()
+}
+
+func (s *SignalClient) GetTrustMode(number string) utils.SignalCliTrustMode {
+	trustMode, err := s.signalCliApiConfig.GetTrustModeForNumber(number)
+	if err != nil { //no trust mode explicitly set, use signal-cli default
+		return utils.OnFirstUseTrust
+	}
+	return trustMode
 }

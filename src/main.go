@@ -12,7 +12,7 @@ import (
 
 	"github.com/bbernhard/signal-cli-rest-api/api"
 	"github.com/bbernhard/signal-cli-rest-api/client"
-	_ "github.com/bbernhard/signal-cli-rest-api/docs"
+	docs "github.com/bbernhard/signal-cli-rest-api/docs"
 	"github.com/bbernhard/signal-cli-rest-api/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/robfig/cron/v3"
@@ -52,7 +52,6 @@ import (
 // @tag.name Search
 // @tag.description Search the Signal Service.
 
-// @host 127.0.0.1:8080
 // @BasePath /
 func main() {
 	signalCliConfig := flag.String("signal-cli-config", "/home/.local/share/signal-cli/", "Config directory where signal-cli config is stored")
@@ -60,12 +59,23 @@ func main() {
 	avatarTmpDir := flag.String("avatar-tmp-dir", "/tmp/", "Avatar tmp directory")
 	flag.Parse()
 
+	docs.SwaggerInfo.Schemes = []string{"http", "https"}
+
 	router := gin.New()
 	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
 		SkipPaths: []string{"/v1/health"}, //do not log the health requests (to avoid spamming the log file)
 	}))
 
 	router.Use(gin.Recovery())
+
+	port := utils.GetEnv("PORT", "8080")
+	if _, err := strconv.Atoi(port); err != nil {
+		log.Fatal("Invalid PORT ", port, " set. PORT needs to be a number")
+	}
+
+	defaultSwaggerIp := utils.GetEnv("HOST_IP", "127.0.0.1")
+	swaggerIp := utils.GetEnv("SWAGGER_IP", defaultSwaggerIp)
+	docs.SwaggerInfo.Host = swaggerIp + ":" + port
 
 	log.Info("Started Signal Messenger REST API")
 
@@ -121,7 +131,8 @@ func main() {
 	}
 
 	jsonRpc2ClientConfigPathPath := *signalCliConfig + "/jsonrpc2.yml"
-	signalClient := client.NewSignalClient(*signalCliConfig, *attachmentTmpDir, *avatarTmpDir, signalCliMode, jsonRpc2ClientConfigPathPath)
+	signalCliApiConfigPath := *signalCliConfig + "/api-config.yml"
+	signalClient := client.NewSignalClient(*signalCliConfig, *attachmentTmpDir, *avatarTmpDir, signalCliMode, jsonRpc2ClientConfigPathPath, signalCliApiConfigPath)
 	err = signalClient.Init()
 	if err != nil {
 		log.Fatal("Couldn't init Signal Client: ", err.Error())
@@ -139,6 +150,8 @@ func main() {
 		{
 			configuration.GET("", api.GetConfiguration)
 			configuration.POST("", api.SetConfiguration)
+			configuration.POST(":number/settings", api.SetTrustMode)
+			configuration.GET(":number/settings", api.GetTrustMode)
 		}
 
 		health := v1.Group("/health")
@@ -182,11 +195,20 @@ func main() {
 			groups.POST(":number/:groupid/block", api.BlockGroup)
 			groups.POST(":number/:groupid/join", api.JoinGroup)
 			groups.POST(":number/:groupid/quit", api.QuitGroup)
+			groups.POST(":number/:groupid/members", api.AddMembersToGroup)
+			groups.DELETE(":number/:groupid/members", api.RemoveMembersFromGroup)
+			groups.POST(":number/:groupid/admins", api.AddAdminsToGroup)
+			groups.DELETE(":number/:groupid/admins", api.RemoveAdminsFromGroup)
 		}
 
 		link := v1.Group("qrcodelink")
 		{
 			link.GET("", api.GetQrCodeLink)
+		}
+
+		devices := v1.Group("devices")
+		{
+			devices.POST(":number", api.AddDevice)
 		}
 
 		attachments := v1.Group("attachments")
@@ -223,6 +245,11 @@ func main() {
 		{
 			search.GET("", api.SearchForNumbers)
 		}
+
+		contacts := v1.Group("/contacts")
+		{
+			contacts.PUT(":number", api.UpdateContact)
+		}
 	}
 
 	v2 := router.Group("/v2")
@@ -233,12 +260,7 @@ func main() {
 		}
 	}
 
-	port := utils.GetEnv("PORT", "8080")
-	if _, err := strconv.Atoi(port); err != nil {
-		log.Fatal("Invalid PORT ", port, " set. PORT needs to be a number")
-	}
-
-	swaggerUrl := ginSwagger.URL("http://127.0.0.1:" + string(port) + "/swagger/doc.json")
+	swaggerUrl := ginSwagger.URL("http://" + swaggerIp + ":" + string(port) + "/swagger/doc.json")
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, swaggerUrl))
 
 	autoReceiveSchedule := utils.GetEnv("AUTO_RECEIVE_SCHEDULE", "")

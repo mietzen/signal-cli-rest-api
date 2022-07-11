@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	uuid "github.com/gofrs/uuid"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"time"
+
+	"github.com/bbernhard/signal-cli-rest-api/utils"
+	uuid "github.com/gofrs/uuid"
+	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/sjson"
 )
 
 type Error struct {
@@ -32,10 +35,15 @@ type JsonRpc2Client struct {
 	receivedMessageResponses chan JsonRpc2MessageResponse
 	receivedMessages         chan JsonRpc2ReceivedMessage
 	lastTimeErrorMessageSent time.Time
+	signalCliApiConfig       *utils.SignalCliApiConfig
+	number					 string
 }
 
-func NewJsonRpc2Client() *JsonRpc2Client {
-	return &JsonRpc2Client{}
+func NewJsonRpc2Client(signalCliApiConfig *utils.SignalCliApiConfig, number string) *JsonRpc2Client {
+	return &JsonRpc2Client{
+		signalCliApiConfig: signalCliApiConfig,
+		number: number,
+	}
 }
 
 func (r *JsonRpc2Client) Dial(address string) error {
@@ -59,6 +67,16 @@ func (r *JsonRpc2Client) getRaw(command string, args interface{}) (string, error
 		Params  interface{} `json:"params,omitempty"`
 	}
 
+	trustModeStr := ""
+	trustMode, err := r.signalCliApiConfig.GetTrustModeForNumber(r.number)
+	if err == nil {
+		trustModeStr, err = utils.TrustModeToString(trustMode)
+		if err != nil {
+			trustModeStr = ""
+			log.Error("Invalid trust mode: ", trustModeStr)
+		}
+	}
+
 	u, err := uuid.NewV4()
 	if err != nil {
 		return "", err
@@ -72,6 +90,13 @@ func (r *JsonRpc2Client) getRaw(command string, args interface{}) (string, error
 	fullCommandBytes, err := json.Marshal(fullCommand)
 	if err != nil {
 		return "", err
+	}
+
+	if trustModeStr != "" {
+		fullCommandBytes, err = sjson.SetBytes(fullCommandBytes, "params.trustNewIdentities", trustModeStr)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	log.Debug("full command: ", string(fullCommandBytes))
@@ -101,7 +126,7 @@ func (r *JsonRpc2Client) ReceiveData(number string) {
 		str, err := connbuf.ReadString('\n')
 		if err != nil {
 			elapsed := time.Since(r.lastTimeErrorMessageSent)
-			if(elapsed) > time.Duration(5*time.Minute) { //avoid spamming the log file and only log the message at max every 5 minutes
+			if (elapsed) > time.Duration(5*time.Minute) { //avoid spamming the log file and only log the message at max every 5 minutes
 				log.Error("Couldn't read data for number ", number, ": ", err.Error(), ". Is the number properly registered?")
 				r.lastTimeErrorMessageSent = time.Now()
 			}

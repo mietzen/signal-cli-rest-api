@@ -28,6 +28,12 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 )
 
+type UpdateContactRequest struct {
+	Recipient           string  `json:"recipient"`
+	Name                *string `json:"name"`
+	ExpirationInSeconds *int    `json:"expiration_in_seconds"`
+}
+
 type GroupPermissions struct {
 	AddMembers string `json:"add_members" enums:"only-admins,every-member"`
 	EditGroup  string `json:"edit_group" enums:"only-admins,every-member"`
@@ -39,6 +45,14 @@ type CreateGroupRequest struct {
 	Description    string           `json:"description"`
 	Permissions    GroupPermissions `json:"permissions"`
 	GroupLinkState string           `json:"group_link" enums:"disabled,enabled,enabled-with-approval"`
+}
+
+type ChangeGroupMembersRequest struct {
+	Members []string `json:"members"`
+}
+
+type ChangeGroupAdminsRequest struct {
+	Admins []string `json:"admins"`
 }
 
 type LoggingConfiguration struct {
@@ -56,6 +70,7 @@ type RegisterNumberRequest struct {
 
 type UnregisterNumberRequest struct {
 	DeleteAccount bool `json:"delete_account" example:"false"`
+	DeleteLocalData bool `json:"delete_local_data" example:"false"`
 }
 
 type VerifyNumberSettings struct {
@@ -102,11 +117,20 @@ type UpdateProfileRequest struct {
 }
 
 type TrustIdentityRequest struct {
-	VerifiedSafetyNumber string `json:"verified_safety_number"`
+	VerifiedSafetyNumber *string `json:"verified_safety_number"`
+	TrustAllKnownKeys    *bool   `json:"trust_all_known_keys" example:"false"`
 }
 
 type SendMessageResponse struct {
 	Timestamp string `json:"timestamp"`
+}
+
+type TrustModeRequest struct {
+	TrustMode string `json:"trust_mode"`
+}
+
+type TrustModeResponse struct {
+	TrustMode string `json:"trust_mode"`
 }
 
 var connectionUpgrader = websocket.Upgrader{
@@ -118,6 +142,10 @@ var connectionUpgrader = websocket.Upgrader{
 type SearchResponse struct {
 	Number     string `json:"number"`
 	Registered bool   `json:"registered"`
+}
+
+type AddDeviceRequest struct {
+	Uri string `json:uri"`
 }
 
 type Api struct {
@@ -196,6 +224,7 @@ func (a *Api) UnregisterNumber(c *gin.Context) {
 	number := c.Param("number")
 
 	deleteAccount := false
+	deleteLocalData := false
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(c.Request.Body)
 	if buf.String() != "" {
@@ -207,9 +236,10 @@ func (a *Api) UnregisterNumber(c *gin.Context) {
 			return
 		}
 		deleteAccount = req.DeleteAccount
+		deleteLocalData = req.DeleteLocalData
 	}
 
-	err := a.signalClient.UnregisterNumber(number, deleteAccount)
+	err := a.signalClient.UnregisterNumber(number, deleteAccount, deleteLocalData)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
@@ -550,6 +580,182 @@ func (a *Api) CreateGroup(c *gin.Context) {
 	c.JSON(201, CreateGroupResponse{Id: groupId})
 }
 
+// @Summary Add one or more members to an existing Signal Group.
+// @Tags Groups
+// @Description Add one or more members to an existing Signal Group.
+// @Accept json
+// @Produce json
+// @Success 204 {string} OK
+// @Failure 400 {object} Error
+// @Param data body ChangeGroupMembersRequest true "Members"
+// @Param number path string true "Registered Phone Number"
+// @Router /v1/groups/{number}/{groupid}/members [post]
+func (a *Api) AddMembersToGroup(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	groupId := c.Param("groupid")
+	if groupId == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - group id missing"})
+		return
+	}
+
+	var req ChangeGroupMembersRequest
+	err := c.BindJSON(&req)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't process request - invalid request"})
+		return
+	}
+
+	err = a.signalClient.AddMembersToGroup(number, groupId, req.Members)
+	if err != nil {
+		switch err.(type) {
+		case *client.NotFoundError:
+			c.JSON(404, Error{Msg: err.Error()})
+			return
+		default:
+			c.JSON(400, Error{Msg: err.Error()})
+			return
+		}
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// @Summary Remove one or more members from an existing Signal Group.
+// @Tags Groups
+// @Description Remove one or more members from an existing Signal Group.
+// @Accept json
+// @Produce json
+// @Success 204 {string} OK
+// @Failure 400 {object} Error
+// @Param data body ChangeGroupMembersRequest true "Members"
+// @Param number path string true "Registered Phone Number"
+// @Router /v1/groups/{number}/{groupid}/members [delete]
+func (a *Api) RemoveMembersFromGroup(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	groupId := c.Param("groupid")
+	if groupId == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - group id missing"})
+		return
+	}
+
+	var req ChangeGroupMembersRequest
+	err := c.BindJSON(&req)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't process request - invalid request"})
+		return
+	}
+
+	err = a.signalClient.RemoveMembersFromGroup(number, groupId, req.Members)
+	if err != nil {
+		switch err.(type) {
+		case *client.NotFoundError:
+			c.JSON(404, Error{Msg: err.Error()})
+			return
+		default:
+			c.JSON(400, Error{Msg: err.Error()})
+			return
+		}
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// @Summary Add one or more admins to an existing Signal Group.
+// @Tags Groups
+// @Description Add one or more admins to an existing Signal Group.
+// @Accept json
+// @Produce json
+// @Success 204 {string} OK
+// @Failure 400 {object} Error
+// @Param data body ChangeGroupAdminsRequest true "Admins"
+// @Param number path string true "Registered Phone Number"
+// @Router /v1/groups/{number}/{groupid}/admins [post]
+func (a *Api) AddAdminsToGroup(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	groupId := c.Param("groupid")
+	if groupId == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - group id missing"})
+		return
+	}
+
+	var req ChangeGroupAdminsRequest
+	err := c.BindJSON(&req)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't process request - invalid request"})
+		return
+	}
+
+	err = a.signalClient.AddAdminsToGroup(number, groupId, req.Admins)
+	if err != nil {
+		switch err.(type) {
+		case *client.NotFoundError:
+			c.JSON(404, Error{Msg: err.Error()})
+			return
+		default:
+			c.JSON(400, Error{Msg: err.Error()})
+			return
+		}
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// @Summary Remove one or more admins from an existing Signal Group.
+// @Tags Groups
+// @Description Remove one or more admins from an existing Signal Group.
+// @Accept json
+// @Produce json
+// @Success 204 {string} OK
+// @Failure 400 {object} Error
+// @Param data body ChangeGroupAdminsRequest true "Admins"
+// @Param number path string true "Registered Phone Number"
+// @Router /v1/groups/{number}/{groupid}/admins [delete]
+func (a *Api) RemoveAdminsFromGroup(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	groupId := c.Param("groupid")
+	if groupId == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - group id missing"})
+		return
+	}
+
+	var req ChangeGroupAdminsRequest
+	err := c.BindJSON(&req)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't process request - invalid request"})
+		return
+	}
+
+	err = a.signalClient.RemoveAdminsFromGroup(number, groupId, req.Admins)
+	if err != nil {
+		switch err.(type) {
+		case *client.NotFoundError:
+			c.JSON(404, Error{Msg: err.Error()})
+			return
+		default:
+			c.JSON(400, Error{Msg: err.Error()})
+			return
+		}
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // @Summary List all Signal Groups.
 // @Tags Groups
 // @Description List all Signal Groups.
@@ -823,7 +1029,7 @@ func (a *Api) ListIdentities(c *gin.Context) {
 
 // @Summary Trust Identity
 // @Tags Identities
-// @Description Trust an identity.
+// @Description Trust an identity. When 'trust_all_known_keys' is set to' true', all known keys of this user are trusted. **This is only recommended for testing.**
 // @Produce  json
 // @Success 204 {string} OK
 // @Param data body TrustIdentityRequest true "Input Data"
@@ -852,12 +1058,22 @@ func (a *Api) TrustIdentity(c *gin.Context) {
 		return
 	}
 
-	if req.VerifiedSafetyNumber == "" {
-		c.JSON(400, Error{Msg: "Couldn't process request - verified safety number missing"})
+	if (req.VerifiedSafetyNumber == nil && req.TrustAllKnownKeys == nil) || (req.VerifiedSafetyNumber == nil && req.TrustAllKnownKeys != nil && !*req.TrustAllKnownKeys) {
+		c.JSON(400, Error{Msg: "Couldn't process request - please either provide a safety number (preferred & more secure) or set 'trust_all_known_keys' to true"})
 		return
 	}
 
-	err = a.signalClient.TrustIdentity(number, numberToTrust, req.VerifiedSafetyNumber)
+	if req.VerifiedSafetyNumber != nil && req.TrustAllKnownKeys != nil && *req.TrustAllKnownKeys {
+		c.JSON(400, Error{Msg: "Couldn't process request - please either provide a safety number or set 'trust_all_known_keys' to true. But do not set both parameters at once!"})
+		return
+	}
+
+	if req.VerifiedSafetyNumber != nil && *req.VerifiedSafetyNumber == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - please provide a valid safety number"})
+		return
+	}
+
+	err = a.signalClient.TrustIdentity(number, numberToTrust, req.VerifiedSafetyNumber, req.TrustAllKnownKeys)
 	if err != nil {
 		c.JSON(400, Error{Msg: err.Error()})
 		return
@@ -1205,4 +1421,141 @@ func (a *Api) SearchForNumbers(c *gin.Context) {
 	}
 
 	c.JSON(200, searchResponse)
+}
+
+// @Summary Updates the info associated to a number on the contact list. If the contact doesn’t exist yet, it will be added.
+// @Tags Contacts
+// @Description Updates the info associated to a number on the contact list.
+// @Accept  json
+// @Produce  json
+// @Param number path string true "Registered Phone Number"
+// @Success 204
+// @Param data body UpdateContactRequest true "Contact"
+// @Failure 400 {object} Error
+// @Router /v1/contacts{number} [put]
+func (a *Api) UpdateContact(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	var req UpdateContactRequest
+	err := c.BindJSON(&req)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't process request - invalid request"})
+		return
+	}
+
+	if req.Recipient == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - recipient missing"})
+		return
+	}
+
+	err = a.signalClient.UpdateContact(number, req.Recipient, req.Name, req.ExpirationInSeconds)
+	if err != nil {
+		c.JSON(400, Error{Msg: err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// @Summary Links another device to this device.
+// @Tags Devices
+// @Description Links another device to this device. Only works, if this is the master device.
+// @Accept json
+// @Produce json
+// @Param number path string true "Registered Phone Number"
+// @Success 204
+// @Param data body AddDeviceRequest true "Request"
+// @Failure 400 {object} Error
+// @Router /v1/devices/{number} [post]
+func (a *Api) AddDevice(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	var req AddDeviceRequest
+	err := c.BindJSON(&req)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't process request - invalid request"})
+		return
+	}
+
+	err = a.signalClient.AddDevice(number, req.Uri)
+	if err != nil {
+		c.JSON(400, Error{Msg: err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// @Summary Set account specific settings.
+// @Tags General
+// @Description Set account specific settings.
+// @Accept json
+// @Produce json
+// @Param number path string true "Registered Phone Number"
+// @Success 204
+// @Param data body TrustModeRequest true "Request"
+// @Failure 400 {object} Error
+// @Router /v1/configuration/{number}/settings [post]
+func (a *Api) SetTrustMode(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	var req TrustModeRequest
+	err := c.BindJSON(&req)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't process request - invalid request"})
+		return
+	}
+
+	trustMode, err := utils.StringToTrustMode(req.TrustMode)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Invalid trust mode"})
+		return
+	}
+
+	err = a.signalClient.SetTrustMode(number, trustMode)
+	if err != nil {
+		c.JSON(400, Error{Msg: "Couldn't set trust mode"})
+		log.Error("Couldn't set trust mode: ", err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// @Summary List account specific settings.
+// @Tags General
+// @Description List account specific settings.
+// @Accept json
+// @Produce json
+// @Param number path string true "Registered Phone Number"
+// @Success 200
+// @Param data body TrustModeResponse true "Request"
+// @Failure 400 {object} Error
+// @Router /v1/configuration/{number}/settings [get]
+func (a *Api) GetTrustMode(c *gin.Context) {
+	number := c.Param("number")
+	if number == "" {
+		c.JSON(400, Error{Msg: "Couldn't process request - number missing"})
+		return
+	}
+
+	var err error
+	trustMode := TrustModeResponse{}
+	trustMode.TrustMode, err = utils.TrustModeToString(a.signalClient.GetTrustMode(number))
+	if err != nil {
+		c.JSON(400, Error{Msg: "Invalid trust mode"})
+		log.Error("Invalid trust mode: ", err.Error())
+		return
+	}
+
+	c.JSON(200, trustMode)
 }

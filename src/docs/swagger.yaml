@@ -1,5 +1,24 @@
 basePath: /
 definitions:
+  api.AddDeviceRequest:
+    properties:
+      uri:
+        type: string
+    type: object
+  api.ChangeGroupAdminsRequest:
+    properties:
+      admins:
+        items:
+          type: string
+        type: array
+    type: object
+  api.ChangeGroupMembersRequest:
+    properties:
+      members:
+        items:
+          type: string
+        type: array
+    type: object
   api.Configuration:
     properties:
       logging:
@@ -116,7 +135,20 @@ definitions:
     type: object
   api.TrustIdentityRequest:
     properties:
+      trust_all_known_keys:
+        example: false
+        type: boolean
       verified_safety_number:
+        type: string
+    type: object
+  api.TrustModeRequest:
+    properties:
+      trust_mode:
+        type: string
+    type: object
+  api.TrustModeResponse:
+    properties:
+      trust_mode:
         type: string
     type: object
   api.TypingIndicatorRequest:
@@ -129,6 +161,18 @@ definitions:
       delete_account:
         example: false
         type: boolean
+      delete_local_data:
+        example: false
+        type: boolean
+    type: object
+  api.UpdateContactRequest:
+    properties:
+      expiration_in_seconds:
+        type: integer
+      name:
+        type: string
+      recipient:
+        type: string
     type: object
   api.UpdateProfileRequest:
     properties:
@@ -157,6 +201,10 @@ definitions:
     type: object
   client.GroupEntry:
     properties:
+      admins:
+        items:
+          type: string
+        type: array
       blocked:
         type: boolean
       id:
@@ -193,7 +241,6 @@ definitions:
       status:
         type: string
     type: object
-host: 127.0.0.1:8080
 info:
   contact: {}
   description: This is the Signal Cli REST API documentation.
@@ -322,6 +369,117 @@ paths:
       summary: Set the REST API configuration.
       tags:
       - General
+  /v1/configuration/{number}/settings:
+    get:
+      consumes:
+      - application/json
+      description: List account specific settings.
+      parameters:
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: Request
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.TrustModeResponse'
+      produces:
+      - application/json
+      responses:
+        "200": {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: List account specific settings.
+      tags:
+      - General
+    post:
+      consumes:
+      - application/json
+      description: Set account specific settings.
+      parameters:
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: Request
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.TrustModeRequest'
+      produces:
+      - application/json
+      responses:
+        "204": {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: Set account specific settings.
+      tags:
+      - General
+  /v1/contacts{number}:
+    put:
+      consumes:
+      - application/json
+      description: Updates the info associated to a number on the contact list.
+      parameters:
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: Contact
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.UpdateContactRequest'
+      produces:
+      - application/json
+      responses:
+        "204": {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: Updates the info associated to a number on the contact list. If the contact doesn’t exist yet, it will be added.
+      tags:
+      - Contacts
+  /v1/devices/{number}:
+    post:
+      consumes:
+      - application/json
+      description: Links another device to this device. Only works, if this is the master device.
+      parameters:
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: Request
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.AddDeviceRequest'
+      produces:
+      - application/json
+      responses:
+        "204": {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: Links another device to this device.
+      tags:
+      - Devices
   /v1/groups/{number}:
     get:
       consumes:
@@ -438,6 +596,67 @@ paths:
       summary: List a Signal Group.
       tags:
       - Groups
+  /v1/groups/{number}/{groupid}/admins:
+    delete:
+      consumes:
+      - application/json
+      description: Remove one or more admins from an existing Signal Group.
+      parameters:
+      - description: Admins
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.ChangeGroupAdminsRequest'
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: Remove one or more admins from an existing Signal Group.
+      tags:
+      - Groups
+    post:
+      consumes:
+      - application/json
+      description: Add one or more admins to an existing Signal Group.
+      parameters:
+      - description: Admins
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.ChangeGroupAdminsRequest'
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: Add one or more admins to an existing Signal Group.
+      tags:
+      - Groups
   /v1/groups/{number}/{groupid}/block:
     post:
       consumes:
@@ -496,6 +715,67 @@ paths:
           schema:
             $ref: '#/definitions/api.Error'
       summary: Join a Signal Group.
+      tags:
+      - Groups
+  /v1/groups/{number}/{groupid}/members:
+    delete:
+      consumes:
+      - application/json
+      description: Remove one or more members from an existing Signal Group.
+      parameters:
+      - description: Members
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.ChangeGroupMembersRequest'
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: Remove one or more members from an existing Signal Group.
+      tags:
+      - Groups
+    post:
+      consumes:
+      - application/json
+      description: Add one or more members to an existing Signal Group.
+      parameters:
+      - description: Members
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/api.ChangeGroupMembersRequest'
+      - description: Registered Phone Number
+        in: path
+        name: number
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Error'
+      summary: Add one or more members to an existing Signal Group.
       tags:
       - Groups
   /v1/groups/{number}/{groupid}/quit:
@@ -564,7 +844,7 @@ paths:
       - Identities
   /v1/identities/{number}/trust/{numberToTrust}:
     put:
-      description: Trust an identity.
+      description: Trust an identity. When 'trust_all_known_keys' is set to' true', all known keys of this user are trusted. **This is only recommended for testing.**
       parameters:
       - description: Input Data
         in: body
