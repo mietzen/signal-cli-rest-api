@@ -4,15 +4,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"fmt"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
-	"github.com/gabriel-vasile/mimetype"
 	"github.com/h2non/filetype"
 
 	uuid "github.com/gofrs/uuid"
@@ -58,6 +57,12 @@ func (g GroupPermission) String() string {
 
 func (g GroupLinkState) String() string {
 	return []string{"", "enabled", "enabled-with-approval", "disabled"}[g]
+}
+
+type MessageMention struct {
+	Start  int64  `json:"start"`
+	Length int64  `json:"length"`
+	Author string `json:"author"`
 }
 
 type GroupEntry struct {
@@ -117,10 +122,11 @@ type SendResponse struct {
 }
 
 type About struct {
-	SupportedApiVersions []string `json:"versions"`
-	BuildNr              int      `json:"build"`
-	Mode                 string   `json:"mode"`
-	Version              string   `json:"version"`
+	SupportedApiVersions []string            `json:"versions"`
+	BuildNr              int                 `json:"build"`
+	Mode                 string              `json:"mode"`
+	Version              string              `json:"version"`
+	Capabilities         map[string][]string `json:"capabilities"`
 }
 
 type SearchResultEntry struct {
@@ -131,6 +137,12 @@ type SearchResultEntry struct {
 func cleanupTmpFiles(paths []string) {
 	for _, path := range paths {
 		os.Remove(path)
+	}
+}
+
+func cleanupAttachmentEntries(attachmentEntries []AttachmentEntry) {
+	for _, attachmentEntry := range attachmentEntries {
+		attachmentEntry.cleanUp()
 	}
 }
 
@@ -193,7 +205,6 @@ func getContainerId() (string, error) {
 	containerId := strings.Replace(lines[0], "/docker/", "", -1)
 	return containerId, nil
 }
-
 
 func ConvertGroupIdToInternalGroupId(id string) (string, error) {
 
@@ -278,8 +289,13 @@ func (s *SignalClient) Init() error {
 	return nil
 }
 
+func (s *MessageMention) toString() string {
+	return fmt.Sprintf("%d:%d:%s", s.Start, s.Length, s.Author)
+}
+
 func (s *SignalClient) send(number string, message string,
-	recipients []string, base64Attachments []string, isGroup bool) (*SendResponse, error) {
+	recipients []string, base64Attachments []string, isGroup bool, sticker string, mentions []MessageMention,
+	quoteTimestamp *int64, quoteAuthor *string, quoteMessage *string, quoteMentions []MessageMention) (*SendResponse, error) {
 
 	var resp SendResponse
 
@@ -300,39 +316,17 @@ func (s *SignalClient) send(number string, message string,
 		groupId = string(grpId)
 	}
 
-	attachmentTmpPaths := []string{}
+	attachmentEntries := []AttachmentEntry{}
 	for _, base64Attachment := range base64Attachments {
-		u, err := uuid.NewV4()
+		attachmentEntry := NewAttachmentEntry(base64Attachment, s.attachmentTmpDir)
+
+		err := attachmentEntry.storeBase64AsTemporaryFile()
 		if err != nil {
+			cleanupAttachmentEntries(attachmentEntries)
 			return nil, err
 		}
 
-		dec, err := base64.StdEncoding.DecodeString(base64Attachment)
-		if err != nil {
-			return nil, err
-		}
-
-		mimeType := mimetype.Detect(dec)
-
-		attachmentTmpPath := s.attachmentTmpDir + u.String() + mimeType.Extension()
-		attachmentTmpPaths = append(attachmentTmpPaths, attachmentTmpPath)
-
-		f, err := os.Create(attachmentTmpPath)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-
-		if _, err := f.Write(dec); err != nil {
-			cleanupTmpFiles(attachmentTmpPaths)
-			return nil, err
-		}
-		if err := f.Sync(); err != nil {
-			cleanupTmpFiles(attachmentTmpPaths)
-			return nil, err
-		}
-
-		f.Close()
+		attachmentEntries = append(attachmentEntries, *attachmentEntry)
 	}
 
 	if s.signalCliMode == JsonRpc {
@@ -342,10 +336,16 @@ func (s *SignalClient) send(number string, message string,
 		}
 
 		type Request struct {
-			Recipients  []string `json:"recipient,omitempty"`
-			Message     string   `json:"message"`
-			GroupId     string   `json:"group-id,omitempty"`
-			Attachments []string `json:"attachment,omitempty"`
+			Recipients     []string `json:"recipient,omitempty"`
+			Message        string   `json:"message"`
+			GroupId        string   `json:"group-id,omitempty"`
+			Attachments    []string `json:"attachment,omitempty"`
+			Sticker        string   `json:"sticker,omitempty"`
+			Mentions       []string `json:"mentions,omitempty"`
+			QuoteTimestamp *int64   `json:"quote-timestamp,omitempty"`
+			QuoteAuthor    *string  `json:"quote-author,omitempty"`
+			QuoteMessage   *string  `json:"quote-message,omitempty"`
+			QuoteMentions  []string `json:"quote-mentions,omitempty"`
 		}
 
 		request := Request{Message: message}
@@ -354,13 +354,34 @@ func (s *SignalClient) send(number string, message string,
 		} else {
 			request.Recipients = recipients
 		}
-		if len(attachmentTmpPaths) > 0 {
-			request.Attachments = append(request.Attachments, attachmentTmpPaths...)
+		for _, attachmentEntry := range attachmentEntries {
+			request.Attachments = append(request.Attachments, attachmentEntry.toDataForSignal())
+		}
+
+		request.Sticker = sticker
+		if mentions != nil {
+			request.Mentions = make([]string, len(mentions))
+			for i, mention := range mentions {
+				request.Mentions[i] = mention.toString()
+			}
+		} else {
+			request.Mentions = nil
+		}
+		request.QuoteTimestamp = quoteTimestamp
+		request.QuoteAuthor = quoteAuthor
+		request.QuoteMessage = quoteMessage
+		if quoteMentions != nil {
+			request.QuoteMentions = make([]string, len(quoteMentions))
+			for i, mention := range quoteMentions {
+				request.QuoteMentions[i] = mention.toString()
+			}
+		} else {
+			request.QuoteMentions = nil
 		}
 
 		rawData, err := jsonRpc2Client.getRaw("send", request)
 		if err != nil {
-			cleanupTmpFiles(attachmentTmpPaths)
+			cleanupAttachmentEntries(attachmentEntries)
 			return nil, err
 		}
 
@@ -372,21 +393,53 @@ func (s *SignalClient) send(number string, message string,
 			return nil, err
 		}
 	} else {
-		cmd := []string{"--config", s.signalCliConfig, "-a", number, "send"}
+		cmd := []string{"--config", s.signalCliConfig, "-a", number, "send", "--message-from-stdin"}
 		if !isGroup {
 			cmd = append(cmd, recipients...)
 		} else {
 			cmd = append(cmd, []string{"-g", groupId}...)
 		}
 
-		if len(attachmentTmpPaths) > 0 {
+		if len(attachmentEntries) > 0 {
 			cmd = append(cmd, "-a")
-			cmd = append(cmd, attachmentTmpPaths...)
+			for _, attachmentEntry := range attachmentEntries {
+				cmd = append(cmd, attachmentEntry.toDataForSignal())
+			}
+		}
+
+		for _, mention := range mentions {
+			cmd = append(cmd, "--mention")
+			cmd = append(cmd, mention.toString())
+		}
+
+		if sticker != "" {
+			cmd = append(cmd, "--sticker")
+			cmd = append(cmd, sticker)
+		}
+
+		if quoteTimestamp != nil {
+			cmd = append(cmd, "--quote-timestamp")
+			cmd = append(cmd, strconv.FormatInt(*quoteTimestamp, 10))
+		}
+
+		if quoteAuthor != nil {
+			cmd = append(cmd, "--quote-author")
+			cmd = append(cmd, *quoteAuthor)
+		}
+
+		if quoteMessage != nil {
+			cmd = append(cmd, "--quote-message")
+			cmd = append(cmd, *quoteMessage)
+		}
+
+		for _, mention := range quoteMentions {
+			cmd = append(cmd, "--quote-mention")
+			cmd = append(cmd, mention.toString())
 		}
 
 		rawData, err := s.cliClient.Execute(true, cmd, message)
 		if err != nil {
-			cleanupTmpFiles(attachmentTmpPaths)
+			cleanupAttachmentEntries(attachmentEntries)
 			if strings.Contains(err.Error(), signalCliV2GroupError) {
 				return nil, errors.New("Cannot send message to group - please first update your profile.")
 			}
@@ -394,7 +447,7 @@ func (s *SignalClient) send(number string, message string,
 		}
 		resp.Timestamp, err = strconv.ParseInt(strings.TrimSuffix(rawData, "\n"), 10, 64)
 		if err != nil {
-			cleanupTmpFiles(attachmentTmpPaths)
+			cleanupAttachmentEntries(attachmentEntries)
 			return nil, err
 		}
 	}
@@ -433,8 +486,13 @@ func (s *SignalClient) send(number string, message string,
 }
 
 func (s *SignalClient) About() About {
-	about := About{SupportedApiVersions: []string{"v1", "v2"}, BuildNr: 2, Mode: getSignalCliModeString(s.signalCliMode),
-		Version: utils.GetEnv("BUILD_VERSION", "unset")}
+	about := About{
+        SupportedApiVersions: []string{"v1", "v2"},
+        BuildNr: 2,
+        Mode: getSignalCliModeString(s.signalCliMode),
+		Version: utils.GetEnv("BUILD_VERSION", "unset"),
+		Capabilities: map[string][]string{"v2/send": []string{"quotes", "mentions"}},
+    }
 	return about
 }
 
@@ -472,7 +530,7 @@ func (s *SignalClient) UnregisterNumber(number string, deleteAccount bool, delet
 		command := []string{"--config", s.signalCliConfig, "-a", number, "deleteLocalAccountData"}
 		_, err2 := s.cliClient.Execute(true, command, "")
 		if (err2 != nil) && (err != nil) {
-			err = fmt.Errorf("%w (%w)", err, err2)
+			err = fmt.Errorf("%w (%s)", err, err2.Error())
 		} else if (err2 != nil) && (err == nil) {
 			err = err2
 		}
@@ -497,7 +555,7 @@ func (s *SignalClient) VerifyRegisteredNumber(number string, token string, pin s
 }
 
 func (s *SignalClient) SendV1(number string, message string, recipients []string, base64Attachments []string, isGroup bool) (*SendResponse, error) {
-	timestamp, err := s.send(number, message, recipients, base64Attachments, isGroup)
+	timestamp, err := s.send(number, message, recipients, base64Attachments, isGroup, "", nil, nil, nil, nil, nil)
 	return timestamp, err
 }
 
@@ -516,7 +574,8 @@ func (s *SignalClient) getJsonRpc2Clients() []*JsonRpc2Client {
 	return jsonRpc2Clients
 }
 
-func (s *SignalClient) SendV2(number string, message string, recps []string, base64Attachments []string) (*[]SendResponse, error) {
+func (s *SignalClient) SendV2(number string, message string, recps []string, base64Attachments []string, sticker string, mentions []MessageMention,
+	quoteTimestamp *int64, quoteAuthor *string, quoteMessage *string, quoteMentions []MessageMention) (*[]SendResponse, error) {
 	if len(recps) == 0 {
 		return nil, errors.New("Please provide at least one recipient")
 	}
@@ -546,7 +605,7 @@ func (s *SignalClient) SendV2(number string, message string, recps []string, bas
 
 	timestamps := []SendResponse{}
 	for _, group := range groups {
-		timestamp, err := s.send(number, message, []string{group}, base64Attachments, true)
+		timestamp, err := s.send(number, message, []string{group}, base64Attachments, true, sticker, mentions, quoteTimestamp, quoteAuthor, quoteMessage, quoteMentions)
 		if err != nil {
 			return nil, err
 		}
@@ -554,7 +613,7 @@ func (s *SignalClient) SendV2(number string, message string, recps []string, bas
 	}
 
 	if len(recipients) > 0 {
-		timestamp, err := s.send(number, message, recipients, base64Attachments, false)
+		timestamp, err := s.send(number, message, recipients, base64Attachments, false, sticker, mentions, quoteTimestamp, quoteAuthor, quoteMessage, quoteMentions)
 		if err != nil {
 			return nil, err
 		}
