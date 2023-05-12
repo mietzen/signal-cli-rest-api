@@ -496,56 +496,6 @@ func (a *Api) Receive(c *gin.Context) {
 	}
 }
 
-// @Summary Get Last Received Signal Messages from Archive.
-// @Tags Messages
-// @Description Get Last Received Signal Messages from Archive
-// @Accept  json
-// @Produce  json
-// @Success 200 {object} []string
-// @Failure 400 {object} Error
-// @Param number path string true "Registered Phone Number"
-// @Param quantity query string false "Number of messages to receive from archive (deceneding, default: 5)""
-// @Router /v1/archive/{number} [get]
-func (a *Api) GetReceivedMsgsFromArchive(c *gin.Context) {
-	n, err := strconv.Atoi(c.DefaultQuery("quantity", "5"))
-	if err != nil {
-		c.JSON(400, Error{Msg: err.Error()})
-		return
-	}
-	jsonStr, err := utils.GetLastReceivedMsgs(n)
-	if err != nil {
-		c.JSON(400, Error{Msg: err.Error()})
-		return
-	}
-
-	c.String(200, jsonStr)
-}
-
-// @Summary Get Last Send Signal Messages from Archive.
-// @Tags Messages
-// @Description Get Last Send Signal Messages from Archive
-// @Accept  json
-// @Produce  json
-// @Success 200 {object} []string
-// @Failure 400 {object} Error
-// @Param number path string true "Registered Phone Number"
-// @Param quantity query string false "Number of messages to receive from archive (deceneding, default: 5)""
-// @Router /v1/archive/{number} [get]
-func (a *Api) GetSendMsgsFromArchive(c *gin.Context) {
-	n, err := strconv.Atoi(c.DefaultQuery("quantity", "5"))
-	if err != nil {
-		c.JSON(400, Error{Msg: err.Error()})
-		return
-	}
-	jsonStr, err := utils.GetLastSendMsgs(n)
-	if err != nil {
-		c.JSON(400, Error{Msg: err.Error()})
-		return
-	}
-
-	c.String(200, jsonStr)
-}
-
 // @Summary Create a new Signal Group.
 // @Tags Groups
 // @Description Create a new Signal Group with the specified members.

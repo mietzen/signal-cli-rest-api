@@ -452,35 +452,7 @@ func (s *SignalClient) send(number string, message string,
 		}
 	}
 
-	type SendMessage struct {
-		Recipients  []string `json:"recipient,omitempty"`
-		Message     string   `json:"message"`
-		Timestamp   int64    `json:"timestamp"`
-		GroupId     string   `json:"group-id,omitempty"`
-		Attachments []string `json:"attachment,omitempty"`
-	}
-
-	sendMessage := SendMessage{Message: message, Timestamp: resp.Timestamp}
-	if isGroup {
-		sendMessage.GroupId = groupId
-	} else {
-		sendMessage.Recipients = recipients
-	}
-	if len(attachmentTmpPaths) > 0 {
-		sendMessage.Attachments = append(sendMessage.Attachments, attachmentTmpPaths...)
-	}
-
-	jsonStr, err := json.Marshal(sendMessage)
-	if err != nil {
-		return nil, err
-	}
-
-	err = utils.PushSendMsgsToDB(string(jsonStr))
-	if err != nil {
-		return nil, err
-	}
-
-	cleanupTmpFiles(attachmentTmpPaths)
+	cleanupAttachmentEntries(attachmentEntries)
 
 	return &resp, nil
 }
@@ -636,13 +608,10 @@ func (s *SignalClient) Receive(number string, timeout int64) (string, error) {
 
 		out = strings.Trim(out, "\n")
 		lines := strings.Split(out, "\n")
+
 		jsonStr := "["
 		for i, line := range lines {
 			jsonStr += line
-			err := utils.PushReceivedMsgsToDB(line)
-			if err != nil {
-				return "", err
-			}
 			if i != (len(lines) - 1) {
 				jsonStr += ","
 			}
