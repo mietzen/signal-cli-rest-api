@@ -177,12 +177,6 @@ func main() {
 			receive.GET(":number", api.Receive)
 		}
 
-		archive := v1.Group("/archive")
-		{
-			archive.GET(":number/received", api.GetReceivedMsgsFromArchive)
-			archive.GET(":number/send", api.GetSendMsgsFromArchive)
-		}
-
 		groups := v1.Group("/groups")
 		{
 			groups.POST(":number", api.CreateGroup)

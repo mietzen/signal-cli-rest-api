@@ -21,13 +21,6 @@ EOF
 cap_prefix="-cap_"
 caps="$cap_prefix$(seq -s ",$cap_prefix" 0 $(cat /proc/sys/kernel/cap_last_cap))"
 
-# Copy init SQLite DB on first start:
-if [ ! -f /home/message-archive/message-archive.db ]; then
-    cp /home/message-archive.db.init /home/message-archive/message-archive.db
-    chown 1000:1000 /home/message-archive/message-archive.db
-    chmod 600 /home/message-archive/message-archive.db
-fi
-
 # TODO: check mode
 if [ "$MODE" = "json-rpc" ]
 then
