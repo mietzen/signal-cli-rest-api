@@ -1,3 +1,9 @@
-signal-cli-config
 src/main
 src/signal-cli-rest-api
+**/postgres/db
+**/signal-cli-config
+**/nginx/conf.d/
+**/message-archive/message-archive.db
+.vscode
+.ipynb_checkpoints
+.DS_Store

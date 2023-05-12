@@ -1,0 +1,19 @@
+ARG IMAGE
+
+FROM ${IMAGE}
+
+ENV BUILD_VERSION=0.0.1
+
+RUN apt update && apt install golang git -y
+RUN cd /home && mkdir -p /home/go/bin \
+	&& export GOBIN=/home/go/bin \
+	&& git clone https://github.com/go-delve/delve \
+	&& cd delve \
+	&& go install github.com/go-delve/delve/cmd/dlv \
+	&& chown -R 1000:1000 /home
+
+EXPOSE 2345
+
+COPY entrypoint-debug.sh /entrypoint-debug.sh
+
+ENTRYPOINT ["/entrypoint-debug.sh"]

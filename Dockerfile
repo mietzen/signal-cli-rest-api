@@ -7,6 +7,7 @@ ARG GRAALVM_JAVA_VERSION=17
 ARG GRAALVM_VERSION=22.1.0
 
 ARG BUILD_VERSION_ARG=unset
+ARG DEBUG_BUILD=unset
 
 FROM golang:1.17-bullseye AS buildcontainer
 
@@ -16,6 +17,7 @@ ARG SWAG_VERSION
 ARG GRAALVM_JAVA_VERSION
 ARG GRAALVM_VERSION
 ARG BUILD_VERSION_ARG
+ARG DEBUG_BUILD
 ARG SIGNAL_CLI_NATIVE_PACKAGE_VERSION
 
 COPY ext/libraries/libsignal-client/v${LIBSIGNAL_CLIENT_VERSION} /tmp/libsignal-client-libraries
@@ -33,7 +35,7 @@ RUN dpkg-reconfigure debconf --frontend=noninteractive \
 	&& apt-get -qq update \
 	&& apt-get -qqy install --no-install-recommends \
 		wget openjdk-17-jre software-properties-common git locales zip unzip \
-		file build-essential libz-dev zlib1g-dev < /dev/null > /dev/null \
+		file build-essential libz-dev zlib1g-dev sqlite3 < /dev/null > /dev/null \
 	&& rm -rf /var/lib/apt/lists/* 
 
 RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
@@ -130,10 +132,24 @@ COPY src/go.mod /tmp/signal-cli-rest-api-src/
 COPY src/go.sum /tmp/signal-cli-rest-api-src/
 
 # build signal-cli-rest-api
-RUN cd /tmp/signal-cli-rest-api-src && swag init && go test ./client -v && go build
+RUN \
+if [ "$DEBUG_BUILD" = "true" ] ; then \
+	cd /tmp/signal-cli-rest-api-src && swag init && go build -gcflags='all=-N -l'; \
+else \
+	cd /tmp/signal-cli-rest-api-src && swag init && go build; \
+fi
 
 # build supervisorctl_config_creator
-RUN cd /tmp/signal-cli-rest-api-src/scripts && go build -o jsonrpc2-helper 
+RUN \
+if [ "$DEBUG_BUILD" = "true" ] ; then \
+	cd /tmp/signal-cli-rest-api-src/scripts && go build -gcflags='all=-N -l' -o jsonrpc2-helper; \
+else \
+	cd /tmp/signal-cli-rest-api-src/scripts && go build -o jsonrpc2-helper; \
+fi
+
+RUN sqlite3 /tmp/message-archive.db.init "\
+	create table received_messages(ID INTEGER PRIMARY KEY AUTOINCREMENT, data JSON);\
+	create table send_messages(ID INTEGER PRIMARY KEY AUTOINCREMENT, data JSON);"
 
 # Start a fresh container for release container
 FROM eclipse-temurin:17-focal
@@ -156,6 +172,7 @@ COPY --from=buildcontainer /tmp/signal-cli-rest-api-src/signal-cli-rest-api /usr
 COPY --from=buildcontainer /opt/signal-cli-${SIGNAL_CLI_VERSION} /opt/signal-cli-${SIGNAL_CLI_VERSION}
 COPY --from=buildcontainer /tmp/signal-cli-${SIGNAL_CLI_VERSION}-source/build/native/nativeCompile/signal-cli /opt/signal-cli-${SIGNAL_CLI_VERSION}/bin/signal-cli-native
 COPY --from=buildcontainer /tmp/signal-cli-rest-api-src/scripts/jsonrpc2-helper /usr/bin/jsonrpc2-helper
+COPY --from=buildcontainer /tmp/message-archive.db.init /home/message-archive.db.init
 COPY entrypoint.sh /entrypoint.sh
 
 
@@ -164,7 +181,8 @@ RUN groupadd -g 1000 signal-api \
 	&& ln -s /opt/signal-cli-${SIGNAL_CLI_VERSION}/bin/signal-cli /usr/bin/signal-cli \
 	&& ln -s /opt/signal-cli-${SIGNAL_CLI_VERSION}/bin/signal-cli-native /usr/bin/signal-cli-native \
 	&& mkdir -p /signal-cli-config/ \
-	&& mkdir -p /home/.local/share/signal-cli
+	&& mkdir -p /home/.local/share/signal-cli \
+	&& mkdir -p /home/message-archive
 
 # remove the temporary created signal-cli-native on armv7, as GRAALVM doesn't support 32bit
 RUN arch="$(uname -m)"; \
